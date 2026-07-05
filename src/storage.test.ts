@@ -1,4 +1,4 @@
-import { mkdtemp, readFile } from "node:fs/promises";
+import { mkdtemp, readFile, readdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -63,5 +63,32 @@ describe("createStorage", () => {
     expect(result.bodyFile).toMatch(/^bodies[/\\].+\.json$/);
     const metadata = await readFile(join(dir, "metadata.ndjson"), "utf8");
     expect(metadata.trim()).toContain('"bodySaved":true');
+  });
+
+  it("writes request bodies separately from response bodies", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "cdp-response-logger-"));
+    const storage = await createStorage(dir, "http://127.0.0.1:9222", "2026-07-06T12:34:56Z");
+    const state: RequestState = {
+      requestContentType: "application/json",
+      requestHeaders: { "content-type": "application/json" },
+      requestId: "request-1",
+      requestPostData: '{"hello":"world"}',
+      session: { sessionId: "session-1", targetId: "target-1", targetType: "page" },
+    };
+
+    const result = await storage.recordRequestBody(state, '{"hello":"world"}');
+    await storage.close();
+
+    expect(result).toMatchObject({
+      bodyLength: 17,
+      bodySaved: true,
+      bodySha256: sha256(Buffer.from('{"hello":"world"}')),
+      source: "requestWillBeSent",
+    });
+    expect(result.bodyFile).toMatch(/^requests[/\\].+\.json$/);
+    await expect(readFile(join(dir, result.bodyFile ?? ""), "utf8")).resolves.toBe(
+      '{"hello":"world"}',
+    );
+    await expect(readdir(join(dir, "requests"))).resolves.toHaveLength(1);
   });
 });

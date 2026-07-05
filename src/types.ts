@@ -29,11 +29,14 @@ type SessionInfo = {
 
 type RequestState = {
   frameId?: string | undefined;
+  hasPostData?: boolean | undefined;
   initiator?: Protocol.Network.Initiator | undefined;
   loaderId?: string | undefined;
+  requestContentType?: string | undefined;
   requestHeaders?: Protocol.Network.Headers | undefined;
   requestId: Protocol.Network.RequestId;
   requestMethod?: string | undefined;
+  requestPostData?: string | undefined;
   requestTime?: string | undefined;
   requestUrl?: string | undefined;
   response?: Protocol.Network.Response | undefined;
@@ -48,6 +51,12 @@ type BodySaveResult = {
   bodySha256?: string | undefined;
   error?: string | undefined;
   skipped?: boolean | undefined;
+};
+
+type RequestBodySource = "requestWillBeSent" | "getRequestPostData";
+
+type RequestBodySaveResult = BodySaveResult & {
+  source: RequestBodySource;
 };
 
 type CompletedResponseMetadata = {
@@ -66,6 +75,12 @@ type CompletedResponseMetadata = {
   protocol?: string | undefined;
   remoteIPAddress?: string | undefined;
   remotePort?: number | undefined;
+  requestBodyError?: string | undefined;
+  requestBodyFile?: string | undefined;
+  requestBodyLength?: number | undefined;
+  requestBodySaved?: boolean | undefined;
+  requestBodySha256?: string | undefined;
+  requestBodySource?: RequestBodySource | undefined;
   requestHeaders?: Protocol.Network.Headers | undefined;
   requestId: string;
   requestMethod?: string | undefined;
@@ -104,6 +119,7 @@ type WebSocketFrameRecord = {
 
 type LoggerStorage = {
   close: () => Promise<void>;
+  recordRequestBody: (state: RequestState, postData: string) => Promise<RequestBodySaveResult>;
   recordBody: (
     state: RequestState,
     body: Protocol.Network.GetResponseBodyResponse,
@@ -131,6 +147,8 @@ export type {
   ErrorRecord,
   LoggerStorage,
   RequestState,
+  RequestBodySaveResult,
+  RequestBodySource,
   RunInfo,
   SessionInfo,
   StartLoggerOptions,
