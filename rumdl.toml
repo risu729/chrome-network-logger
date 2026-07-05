@@ -1,0 +1,13 @@
+[global]
+extend-enable = ["ALL"]
+
+[MD009]
+strict = true
+
+[MD013]
+code-blocks = false
+reflow = true
+strict = true
+
+[MD063]
+enabled = false

@@ -1,0 +1,86 @@
+#:schema https://mise.jdx.dev/schema/mise.json
+
+min_version = "2026.7.0"
+
+[tools]
+bun = "1.3.14"
+node = "26.4.0"
+"npm:typescript" = "7.0.1-rc"
+hk = "1.48.0"
+oxlint = "1.72.0"
+oxfmt = "0.57.0"
+actionlint = "1.7.12"
+# required for actionlint
+shellcheck = "0.11.0"
+ghalint = "1.5.6"
+pinact = "4.1.0"
+zizmor = "1.26.1"
+tombi = "1.2.0"
+rumdl = "v0.2.28"
+yamlfmt = "0.21.0"
+# required for pipx backend
+uv = "0.11.26"
+yamllint = "1.38.0"
+typos = "1.48.0"
+
+[settings]
+experimental = true
+
+[settings.npm]
+package_manager = "bun"
+
+[task_config]
+includes = ["tasks"]
+
+[deps.bun]
+auto = true
+sources = ["package.json", "bun.lock"]
+outputs = ["node_modules"]
+run = "bun install --frozen-lockfile"
+
+[tasks.test]
+description = "Run repository Vitest tests."
+run = "bun run vitest run"
+
+[tasks.check]
+description = "Run hk linters and formatters."
+usage = '''
+flag "--lint" help="Run hk check instead of fix"
+'''
+run = "hk {% if usage.lint %}check{% else %}fix{% endif %} --all --no-progress --no-fail-fast"
+
+[tasks.compile]
+description = "Compile local binaries."
+usage = '''
+flag "--target <target>" default="all" help="Target platform: all, linux-x64, or windows-x64"
+'''
+run = '''
+compile_linux() {
+  bun build --compile --target=bun-linux-x64 \
+    --outfile=dist/cdp-response-logger-linux-x64 \
+    src/index.ts
+}
+
+compile_windows() {
+  bun build --compile --target=bun-windows-x64 \
+    --outfile=dist/cdp-response-logger-windows-x64.exe \
+    src/index.ts
+}
+
+case "{{ usage.target }}" in
+  all)
+    compile_linux
+    compile_windows
+    ;;
+  linux-x64)
+    compile_linux
+    ;;
+  windows-x64)
+    compile_windows
+    ;;
+  *)
+    echo "Unsupported target: {{ usage.target }}. Use all, linux-x64, or windows-x64." >&2
+    exit 2
+    ;;
+esac
+'''
