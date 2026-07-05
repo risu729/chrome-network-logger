@@ -6,6 +6,8 @@ import type {
   CompletedResponseMetadata,
   ErrorRecord,
   RequestState,
+  RequestBodySaveResult,
+  RequestBodySource,
   SessionInfo,
   StartLoggerOptions,
 } from "./types";
@@ -32,6 +34,11 @@ const errorMessage = (error: unknown): string =>
 const nowIso = (): string => new Date().toISOString();
 
 const requestKey = (sessionId: string, requestId: string): string => `${sessionId}:${requestId}`;
+
+const requestBodyErrorEvent = (source: RequestBodySource | undefined): string =>
+  source === "requestWillBeSent"
+    ? "Network.requestWillBeSent.postData"
+    : "Network.getRequestPostData";
 
 const createErrorRecord = (
   event: string,
@@ -60,6 +67,7 @@ const createCompletedMetadata = (
     bodySha256?: string | undefined;
     error?: string | undefined;
   },
+  requestBodyResult: Partial<RequestBodySaveResult>,
   runTimestamp: string,
 ): CompletedResponseMetadata => {
   const response = state.response;
@@ -80,6 +88,12 @@ const createCompletedMetadata = (
     protocol: response?.protocol,
     remoteIPAddress: response?.remoteIPAddress,
     remotePort: response?.remotePort,
+    requestBodyError: requestBodyResult.error,
+    requestBodyFile: requestBodyResult.bodyFile,
+    requestBodyLength: requestBodyResult.bodyLength,
+    requestBodySaved: requestBodyResult.bodySaved,
+    requestBodySha256: requestBodyResult.bodySha256,
+    requestBodySource: requestBodyResult.source,
     requestHeaders: state.requestHeaders,
     requestId: state.requestId,
     requestMethod: state.requestMethod,
@@ -98,6 +112,21 @@ const createCompletedMetadata = (
 
 const isInspectableTarget = (targetInfo: Protocol.Target.TargetInfo): boolean =>
   TARGET_TYPES.has(targetInfo.type);
+
+const headerValue = (
+  headers: Protocol.Network.Headers | undefined,
+  name: string,
+): string | undefined => {
+  const wanted = name.toLowerCase();
+  const entry = Object.entries(headers ?? {}).find(([key]) => key.toLowerCase() === wanted);
+  const value = entry?.[1];
+
+  if (Array.isArray(value)) {
+    return value.join(", ");
+  }
+
+  return typeof value === "string" ? value : undefined;
+};
 
 class CdpResponseLogger {
   readonly #client: CdpClient;
@@ -245,11 +274,14 @@ class CdpResponseLogger {
 
     this.#requests.set(key, {
       frameId: event.frameId,
+      hasPostData: event.request.hasPostData,
       initiator: event.initiator,
       loaderId: event.loaderId,
+      requestContentType: headerValue(event.request.headers, "content-type"),
       requestHeaders: event.request.headers,
       requestId: event.requestId,
       requestMethod: event.request.method,
+      requestPostData: event.request.postData,
       requestTime: nowIso(),
       requestUrl: event.request.url,
       session,
@@ -293,20 +325,71 @@ class CdpResponseLogger {
     }
 
     const bodyResult = await this.#getBodyResult(state, event);
+    const requestBodyResult = await this.#getRequestBodyResult(state);
     await this.#options.storage.recordCompletedResponse(
-      createCompletedMetadata(state, event, bodyResult, this.#options.storage.runTimestamp),
+      createCompletedMetadata(
+        state,
+        event,
+        bodyResult,
+        requestBodyResult,
+        this.#options.storage.runTimestamp,
+      ),
     );
 
     if (!bodyResult.bodySaved && bodyResult.error) {
-      await this.#options.storage.recordError(
-        createErrorRecord(
-          "Network.getResponseBody",
-          state.session,
-          bodyResult.error,
-          event.requestId,
-          url,
-        ),
+      await this.#recordRequestError("Network.getResponseBody", state, bodyResult.error, url);
+    }
+
+    if (!requestBodyResult.bodySaved && requestBodyResult.error) {
+      await this.#recordRequestError(
+        requestBodyErrorEvent(requestBodyResult.source),
+        state,
+        requestBodyResult.error,
+        url,
       );
+    }
+  }
+
+  async #recordRequestError(
+    event: string,
+    state: RequestState,
+    error: string,
+    url: string | undefined,
+  ): Promise<void> {
+    await this.#options.storage.recordError(
+      createErrorRecord(event, state.session, error, state.requestId, url),
+    );
+  }
+
+  async #getRequestBodyResult(state: RequestState): Promise<Partial<RequestBodySaveResult>> {
+    if (state.requestPostData !== undefined) {
+      return await this.#options.storage.recordRequestBody(state, state.requestPostData);
+    }
+
+    if (!state.hasPostData) {
+      return {};
+    }
+
+    try {
+      const body = await this.#client.Network.getRequestPostData(
+        { requestId: state.requestId },
+        state.session.sessionId,
+      );
+      if (typeof body.postData !== "string") {
+        return {
+          bodySaved: false,
+          error: "Network.getRequestPostData returned no postData.",
+          source: "getRequestPostData",
+        };
+      }
+
+      return await this.#options.storage.recordRequestBody(state, body.postData);
+    } catch (error) {
+      return {
+        bodySaved: false,
+        error: errorMessage(error),
+        source: "getRequestPostData",
+      };
     }
   }
 

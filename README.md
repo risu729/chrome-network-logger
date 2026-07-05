@@ -24,12 +24,15 @@ metadata.ndjson
 errors.ndjson
 websocket.ndjson
 bodies\
+requests\
 netlog.json
 ```
 
-CDP is used for response metadata and response bodies. Chrome NetLog is enabled
-by the Chrome launcher for network-stack debugging and is written to
-`netlog.json` in the same run folder.
+CDP is used for request/response metadata, response bodies, and request bodies
+that Chrome exposes through passive Network-domain events or
+`Network.getRequestPostData`. Chrome NetLog is enabled by the Chrome launcher
+for network-stack debugging and is written to `netlog.json` in the same run
+folder.
 
 ## Persistent Windows Folders
 
@@ -159,15 +162,18 @@ Combined Chrome plus logger startup:
 ```
 
 Then browse manually in Chrome Beta. JSON/API response bodies should appear
-under:
+under `bodies/`; request payloads that Chrome exposes should appear under
+`requests/`:
 
 ```text
 %LOCALAPPDATA%\ChromeCdpResponseLogger\captures\<run>\bodies
+%LOCALAPPDATA%\ChromeCdpResponseLogger\captures\<run>\requests
 ```
 
 `metadata.ndjson` contains one JSON object per completed response that passed
-the filters. Failed body captures are written to `errors.ndjson` and do not stop
-the logger.
+the filters. When available, the same metadata object links to both saved
+request payloads and saved response bodies. Failed body captures are written to
+`errors.ndjson` and do not stop the logger.
 
 ## CLI
 
@@ -205,11 +211,15 @@ Use `mise run compile --target windows-x64` to build only the Windows binary.
 - CDP may fail to return bodies for downloads, streaming responses, very large
   responses, redirects, cached responses, service-worker cases, or after
   navigation races.
+- CDP may not expose every request payload. `Network.getRequestPostData` can
+  fail after navigation races and does not include uploaded files for multipart
+  form data.
 - `--max-body-bytes` compares against CDP `encodedDataLength`; it is a skip
   guard, not a perfect final decoded-size predictor.
 - WebSocket messages are not normal HTTP response bodies. This tool writes
   server-to-browser WebSocket frames to `websocket.ndjson`; it does not write
   client-to-server frames in v1.
 - This tool does not parse, analyze, classify, or display responses.
-- Logs can contain sensitive data, including private API responses and
-  cookies-adjacent content. Treat every capture directory as secret.
+- Logs can contain sensitive data, including private API requests, private API
+  responses, submitted form content, and cookies-adjacent content. Treat every
+  capture directory as secret.

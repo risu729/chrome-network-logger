@@ -12,6 +12,7 @@ import type {
   ErrorRecord,
   LoggerStorage,
   RequestState,
+  RequestBodySaveResult,
   RunInfo,
   WebSocketFrameRecord,
 } from "./types";
@@ -69,6 +70,8 @@ const bodyToBytes = (body: Protocol.Network.GetResponseBodyResponse): Uint8Array
   return Buffer.from(body.body, "utf8");
 };
 
+const textToBytes = (text: string): Uint8Array => Buffer.from(text, "utf8");
+
 const createRunInfo = (
   runDirectory: string,
   cdpEndpoint: string,
@@ -89,7 +92,9 @@ const createStorage = async (
   runTimestamp = new Date().toISOString(),
 ): Promise<LoggerStorage> => {
   const bodiesDirectory = join(runDirectory, "bodies");
+  const requestsDirectory = join(runDirectory, "requests");
   await mkdir(bodiesDirectory, { recursive: true });
+  await mkdir(requestsDirectory, { recursive: true });
   await writeFile(
     join(runDirectory, "run.json"),
     `${JSON.stringify(createRunInfo(runDirectory, cdpEndpoint, runTimestamp), null, "\t")}\n`,
@@ -99,6 +104,54 @@ const createStorage = async (
   const errors = createNdjsonWriter(join(runDirectory, "errors.ndjson"));
   const websocket = createNdjsonWriter(join(runDirectory, "websocket.ndjson"));
   let bodyCounter = 0;
+  let requestCounter = 0;
+
+  const saveBytes = async (
+    directory: string,
+    timestamp: string,
+    bytes: Uint8Array,
+    counter: number,
+    contentType?: string,
+  ): Promise<{ filename: string; sha256: string }> => {
+    const digest = sha256(bytes);
+    const filename = createBodyFilename(timestamp, digest, counter, contentType);
+    await writeFile(join(directory, filename), bytes);
+
+    return { filename, sha256: digest };
+  };
+
+  const recordRequestBody = async (
+    state: RequestState,
+    postData: string,
+  ): Promise<RequestBodySaveResult> => {
+    const source = state.requestPostData === postData ? "requestWillBeSent" : "getRequestPostData";
+
+    try {
+      const bytes = textToBytes(postData);
+      requestCounter += 1;
+      const { filename, sha256: bodySha256 } = await saveBytes(
+        requestsDirectory,
+        timestampForFile(),
+        bytes,
+        requestCounter,
+        state.requestContentType,
+      );
+
+      return {
+        bodyFile: join("requests", filename),
+        bodyLength: bytes.byteLength,
+        bodySaved: true,
+        bodySha256,
+        source,
+      };
+    } catch (error) {
+      return {
+        bodySaved: false,
+        error: errorMessage(error),
+        source,
+      };
+    }
+  };
 
   const recordBody = async (
     state: RequestState,
@@ -106,16 +159,14 @@ const createStorage = async (
   ): Promise<BodySaveResult & { base64Encoded: boolean }> => {
     try {
       const bytes = bodyToBytes(body);
-      const bodySha256 = sha256(bytes);
       bodyCounter += 1;
-      const filename = createBodyFilename(
+      const { filename, sha256: bodySha256 } = await saveBytes(
+        bodiesDirectory,
         timestampForFile(),
-        bodySha256,
+        bytes,
         bodyCounter,
         state.response?.mimeType,
       );
-      const bodyPath = join(bodiesDirectory, filename);
-      await writeFile(bodyPath, bytes);
 
       return {
         base64Encoded: body.base64Encoded,
@@ -137,6 +188,7 @@ const createStorage = async (
     close: async () => {
       await Promise.all([metadata.close(), errors.close(), websocket.close()]);
     },
+    recordRequestBody,
     recordBody,
     recordCompletedResponse: async (record: CompletedResponseMetadata) => {
       await metadata.append(record);
