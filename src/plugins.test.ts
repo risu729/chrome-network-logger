@@ -151,6 +151,34 @@ describe("createPluginHost", () => {
     ).rejects.toThrow("Duplicate plugin id: duplicate-plugin");
   });
 
+  it("rejects zero timeout plugin config", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "cdp-response-logger-plugin-"));
+    await writeFile(
+      join(dir, "config.ts"),
+      `export default {
+      plugins: [{ module: "./plugin.ts", timeoutMs: 0 }],
+    };`,
+    );
+    await writeFile(
+      join(dir, "plugin.ts"),
+      `export default {
+      id: "timeout-plugin",
+      version: "0.1.0",
+      events: ["response.completed"],
+      onEvent() {},
+    };`,
+    );
+
+    await expect(
+      createPluginHost({
+        configPath: join(dir, "config.ts"),
+        disabled: false,
+        storage: createStorage(join(dir, "run")),
+        verbose: false,
+      }),
+    ).rejects.toThrow();
+  });
+
   it("records plugin queue overflow and timeout errors without throwing", async () => {
     const dir = await mkdtemp(join(tmpdir(), "cdp-response-logger-plugin-"));
     const runDirectory = join(dir, "run");

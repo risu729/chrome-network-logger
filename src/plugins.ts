@@ -35,7 +35,7 @@ const PluginConfigSchema = z.object({
   module: z.string().min(1),
   options: z.unknown().optional(),
   queueSize: z.int().positive().optional(),
-  timeoutMs: z.int().nonnegative().optional(),
+  timeoutMs: z.int().positive().optional(),
 });
 
 const LoggerConfigSchema: z.ZodType<LoggerConfig> = z.object({
@@ -170,7 +170,7 @@ const callWithTimeout = async (
   callback: () => unknown | Promise<unknown>,
   timeoutMs: number,
 ): Promise<void> => {
-  let timeout: Timer | undefined;
+  let timeout: ReturnType<typeof setTimeout> | undefined;
   try {
     await Promise.race([
       Promise.resolve().then(callback),
