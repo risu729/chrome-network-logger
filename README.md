@@ -42,9 +42,10 @@ The launcher and logger are deliberately passive:
   `--remote-debugging-port=0`.
 - The launcher does not use `--disable-quic`; Chrome's network behavior is kept
   close to normal.
-- The launcher disables Chrome's `ProcessPerSiteUpToMainFrameThreshold`
-  experiment to avoid a DevTools/process-sharing banner while popups are being
-  observed through CDP.
+- If Chrome reports that a newly attached popup or worker target is
+  `waitingForDebugger`, the logger resumes it with
+  `Runtime.runIfWaitingForDebugger`; it does not otherwise use the Runtime
+  domain.
 
 That means a destination site should see ordinary Chrome requests from the
 dedicated profile, not an explicit "logger enabled" signal.
@@ -237,8 +238,6 @@ The Chrome launcher:
 - starts Chrome with `--user-data-dir`, `--remote-debugging-address=127.0.0.1`,
   `--remote-debugging-port=9222`, `--log-net-log`, and
   `--net-log-capture-mode=Everything`
-- disables `ProcessPerSiteUpToMainFrameThreshold` to avoid Chrome's
-  process-sharing debugger banner during popup/window flows
 
 ## Chrome NetLog Warning
 
@@ -269,21 +268,15 @@ window while CDP is attached:
 Debugger paused in another tab, click to switch to that tab.
 ```
 
-The logger does not enable the CDP `Debugger`, `Runtime`, or `Fetch` domains and
-does not intentionally pause scripts. This banner can still appear because
-Chrome treats CDP-attached targets as debugging targets, and Chrome's renderer
-process-sharing experiment can let one tab's debugging state affect another tab
-sharing the same renderer process.
+The logger does not enable the CDP `Debugger` or `Fetch` domains and does not
+intentionally pause scripts. Chrome can still create an auto-attached popup,
+iframe, or worker target in a `waitingForDebugger` state. When that happens, the
+logger calls `Runtime.runIfWaitingForDebugger` for that target session, then
+continues with passive `Network` capture.
 
-The launcher passes:
-
-```text
---disable-features=ProcessPerSiteUpToMainFrameThreshold
-```
-
-This opts the dedicated capture profile out of that process-sharing experiment.
-It is a Chrome debugging UX workaround, not request interception, browser
-automation, or network protocol modification.
+This Runtime call only resumes a target that Chrome already marked as waiting.
+It is not request interception, script injection, browser automation, or general
+Runtime evaluation.
 
 ## CLI
 
