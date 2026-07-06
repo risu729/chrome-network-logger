@@ -42,6 +42,9 @@ The launcher and logger are deliberately passive:
   `--remote-debugging-port=0`.
 - The launcher does not use `--disable-quic`; Chrome's network behavior is kept
   close to normal.
+- The launcher disables Chrome's `ProcessPerSiteUpToMainFrameThreshold`
+  experiment to avoid a DevTools/process-sharing banner while popups are being
+  observed through CDP.
 
 That means a destination site should see ordinary Chrome requests from the
 dedicated profile, not an explicit "logger enabled" signal.
@@ -234,6 +237,8 @@ The Chrome launcher:
 - starts Chrome with `--user-data-dir`, `--remote-debugging-address=127.0.0.1`,
   `--remote-debugging-port=9222`, `--log-net-log`, and
   `--net-log-capture-mode=Everything`
+- disables `ProcessPerSiteUpToMainFrameThreshold` to avoid Chrome's
+  process-sharing debugger banner during popup/window flows
 
 ## Chrome NetLog Warning
 
@@ -254,6 +259,31 @@ Verify capture by checking that `netlog.json` exists and grows in the run
 folder. The warning is meaningful: NetLog captures sensitive network metadata,
 and `--net-log-capture-mode=Everything` can include more private debugging
 detail than the default browser behavior.
+
+## Debugger Paused Banner
+
+Chrome may otherwise show this banner when a page opens a popup or another
+window while CDP is attached:
+
+```text
+Debugger paused in another tab, click to switch to that tab.
+```
+
+The logger does not enable the CDP `Debugger`, `Runtime`, or `Fetch` domains and
+does not intentionally pause scripts. This banner can still appear because
+Chrome treats CDP-attached targets as debugging targets, and Chrome's renderer
+process-sharing experiment can let one tab's debugging state affect another tab
+sharing the same renderer process.
+
+The launcher passes:
+
+```text
+--disable-features=ProcessPerSiteUpToMainFrameThreshold
+```
+
+This opts the dedicated capture profile out of that process-sharing experiment.
+It is a Chrome debugging UX workaround, not request interception, browser
+automation, or network protocol modification.
 
 ## CLI
 

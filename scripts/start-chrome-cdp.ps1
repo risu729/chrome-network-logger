@@ -45,7 +45,8 @@ $arguments = @(
 	'--remote-debugging-address=127.0.0.1',
 	'--remote-debugging-port=9222',
 	"--log-net-log=$netLogPath",
-	'--net-log-capture-mode=Everything'
+	'--net-log-capture-mode=Everything',
+	'--disable-features=ProcessPerSiteUpToMainFrameThreshold'
 )
 
 Start-Process -FilePath $chrome -ArgumentList $arguments
