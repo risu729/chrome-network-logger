@@ -1,8 +1,8 @@
 {
-  "extends": "@risu729/tsconfigs/bundler",
-  "compilerOptions": {
-    "types": ["bun", "node"]
-  },
-  "include": ["src/**/*.ts"],
-  "exclude": ["dist"]
+	"extends": "@risu729/tsconfigs/bundler",
+	"compilerOptions": {
+		"types": ["bun", "node"]
+	},
+	"include": ["src/**/*.ts"],
+	"exclude": ["dist"]
 }
