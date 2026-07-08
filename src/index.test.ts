@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 
-import { DEFAULT_CDP_ENDPOINT, parseArgs } from "./index";
+import { DEFAULT_CDP_ENDPOINT, parseArgs, renderHelp } from "./index";
 
 describe("parseArgs", () => {
 	it("uses defaults", () => {
@@ -9,6 +9,7 @@ describe("parseArgs", () => {
 			help: false,
 			noPlugins: false,
 			verbose: false,
+			version: false,
 		});
 	});
 
@@ -42,5 +43,15 @@ describe("parseArgs", () => {
 
 	it("rejects unknown flags", () => {
 		expect(() => parseArgs(["--wat"])).toThrow("Unknown argument: --wat");
+	});
+
+	it("parses help and version flags", () => {
+		expect(parseArgs(["--help"]).help).toBe(true);
+		expect(parseArgs(["-v"]).version).toBe(true);
+	});
+
+	it("renders local help output", () => {
+		expect(renderHelp()).toContain("cdp-response-logger [options]");
+		expect(renderHelp()).toContain("--no-plugins");
 	});
 });
