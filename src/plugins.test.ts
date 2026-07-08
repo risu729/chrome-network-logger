@@ -1,5 +1,5 @@
 import { describe, expect, it, mock } from "bun:test";
-import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -72,16 +72,16 @@ describe("createPluginHost", () => {
 	it("loads a TS plugin and publishes path-based response events", async () => {
 		const dir = await mkdtemp(join(tmpdir(), "cdp-response-logger-plugin-"));
 		const runDirectory = join(dir, "run");
-		await writeFile(
+		await Bun.write(
 			join(dir, "config.ts"),
 			`export default {
       plugins: [{ module: "./json-api-mirror.ts" }]
     };`,
 		);
-		await writeFile(
+		await Bun.write(
 			join(dir, "json-api-mirror.ts"),
 			`
-      import { mkdir, readFile, writeFile } from "node:fs/promises";
+      import { mkdir } from "node:fs/promises";
       import { dirname } from "node:path";
       import type { LoggerPlugin } from "chrome-network-logger";
 
@@ -95,13 +95,13 @@ describe("createPluginHost", () => {
           const source = ctx.resolveRunPath(event.response.bodyFile);
           const output = ctx.resolvePluginPath("last.json");
           await mkdir(dirname(output), { recursive: true });
-          await writeFile(output, await readFile(source, "utf8"));
+          await Bun.write(output, Bun.file(source));
         },
       } satisfies LoggerPlugin;
     `,
 		);
 		await mkdir(join(runDirectory, "bodies"), { recursive: true });
-		await writeFile(join(runDirectory, "bodies", "response.json"), `{"ok":true}`);
+		await Bun.write(join(runDirectory, "bodies", "response.json"), `{"ok":true}`);
 
 		const storage = createStorage(runDirectory);
 		const host = await createPluginHost({
@@ -115,14 +115,14 @@ describe("createPluginHost", () => {
 		await host.close();
 
 		await expect(
-			readFile(join(runDirectory, "plugins", "json-api-mirror", "last.json"), "utf8"),
+			Bun.file(join(runDirectory, "plugins", "json-api-mirror", "last.json")).text(),
 		).resolves.toBe(`{"ok":true}`);
 		expect(storage.errors).toEqual([]);
 	});
 
 	it("fails startup on duplicate plugin IDs", async () => {
 		const dir = await mkdtemp(join(tmpdir(), "cdp-response-logger-plugin-"));
-		await writeFile(
+		await Bun.write(
 			join(dir, "config.ts"),
 			`export default {
       plugins: [
@@ -137,8 +137,8 @@ describe("createPluginHost", () => {
       events: ["response.completed"],
       onEvent() {},
     };`;
-		await writeFile(join(dir, "one.ts"), plugin);
-		await writeFile(join(dir, "two.ts"), plugin);
+		await Bun.write(join(dir, "one.ts"), plugin);
+		await Bun.write(join(dir, "two.ts"), plugin);
 
 		await expect(
 			createPluginHost({
@@ -152,13 +152,13 @@ describe("createPluginHost", () => {
 
 	it("rejects zero timeout plugin config", async () => {
 		const dir = await mkdtemp(join(tmpdir(), "cdp-response-logger-plugin-"));
-		await writeFile(
+		await Bun.write(
 			join(dir, "config.ts"),
 			`export default {
       plugins: [{ module: "./plugin.ts", timeoutMs: 0 }],
     };`,
 		);
-		await writeFile(
+		await Bun.write(
 			join(dir, "plugin.ts"),
 			`export default {
       id: "timeout-plugin",
@@ -181,13 +181,13 @@ describe("createPluginHost", () => {
 	it("records plugin queue overflow and timeout errors without throwing", async () => {
 		const dir = await mkdtemp(join(tmpdir(), "cdp-response-logger-plugin-"));
 		const runDirectory = join(dir, "run");
-		await writeFile(
+		await Bun.write(
 			join(dir, "config.ts"),
 			`export default {
       plugins: [{ module: "./slow.ts", queueSize: 1, timeoutMs: 1 }]
     };`,
 		);
-		await writeFile(
+		await Bun.write(
 			join(dir, "slow.ts"),
 			`export default {
       id: "slow-plugin",

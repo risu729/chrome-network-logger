@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { createWriteStream } from "node:fs";
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
 
 import type { Protocol } from "devtools-protocol";
@@ -95,7 +95,7 @@ const createStorage = async (
 	const requestsDirectory = join(runDirectory, "requests");
 	await mkdir(bodiesDirectory, { recursive: true });
 	await mkdir(requestsDirectory, { recursive: true });
-	await writeFile(
+	await Bun.write(
 		join(runDirectory, "run.json"),
 		`${JSON.stringify(createRunInfo(runDirectory, cdpEndpoint, runTimestamp), null, "\t")}\n`,
 	);
@@ -115,7 +115,7 @@ const createStorage = async (
 	): Promise<{ filename: string; sha256: string }> => {
 		const digest = sha256(bytes);
 		const filename = createBodyFilename(timestamp, digest, counter, contentType);
-		await writeFile(join(directory, filename), bytes);
+		await Bun.write(join(directory, filename), bytes);
 
 		return { filename, sha256: digest };
 	};
