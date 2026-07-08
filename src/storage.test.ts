@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { mkdtemp, readFile, readdir } from "node:fs/promises";
+import { mkdtemp, readdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -60,7 +60,7 @@ describe("createStorage", () => {
 			bodySha256: sha256(Buffer.from('{"ok":true}')),
 		});
 		expect(result.bodyFile).toMatch(/^bodies[/\\].+\.json$/u);
-		const metadata = await readFile(join(dir, "metadata.ndjson"), "utf8");
+		const metadata = await Bun.file(join(dir, "metadata.ndjson")).text();
 		expect(metadata.trim()).toContain('"bodySaved":true');
 	});
 
@@ -85,7 +85,7 @@ describe("createStorage", () => {
 			source: "requestWillBeSent",
 		});
 		expect(result.bodyFile).toMatch(/^requests[/\\].+\.json$/u);
-		await expect(readFile(join(dir, result.bodyFile ?? ""), "utf8")).resolves.toBe(
+		await expect(Bun.file(join(dir, result.bodyFile ?? "")).text()).resolves.toBe(
 			'{"hello":"world"}',
 		);
 		await expect(readdir(join(dir, "requests"))).resolves.toHaveLength(1);

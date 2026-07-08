@@ -1,4 +1,4 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir } from "node:fs/promises";
 import { dirname } from "node:path";
 
 import type { LoggerPlugin } from "chrome-network-logger";
@@ -26,6 +26,6 @@ export default {
 		const safeRequestId = event.request.requestId.replace(/[^A-Za-z0-9._-]/gu, "_");
 		const output = ctx.resolvePluginPath(`${safeRequestId}.json`);
 		await mkdir(dirname(output), { recursive: true });
-		await writeFile(output, await readFile(source));
+		await Bun.write(output, Bun.file(source));
 	},
 } satisfies LoggerPlugin;

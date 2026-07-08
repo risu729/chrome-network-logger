@@ -174,14 +174,14 @@ Create a config file:
 
 ```ts
 export default {
-  plugins: [
-    {
-      module: "./plugins/json-api-mirror.ts",
-      enabled: true,
-      timeoutMs: 5000,
-      queueSize: 1000,
-    },
-  ],
+	plugins: [
+		{
+			module: "./plugins/json-api-mirror.ts",
+			enabled: true,
+			timeoutMs: 5000,
+			queueSize: 1000,
+		},
+	],
 };
 ```
 
@@ -190,36 +190,34 @@ Plugin module paths are resolved relative to the config file.
 Example plugin:
 
 ```ts
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir } from "node:fs/promises";
 import { dirname } from "node:path";
 
 import type { LoggerPlugin } from "chrome-network-logger";
 
 export default {
-  id: "json-api-mirror",
-  name: "JSON API Mirror",
-  version: "0.1.0",
-  events: ["response.completed"],
+	id: "json-api-mirror",
+	name: "JSON API Mirror",
+	version: "0.1.0",
+	events: ["response.completed"],
 
-  async setup(ctx) {
-    await mkdir(ctx.pluginDirectory, { recursive: true });
-  },
+	async setup(ctx) {
+		await mkdir(ctx.pluginDirectory, { recursive: true });
+	},
 
-  async onEvent(event, ctx) {
-    if (event.event !== "response.completed") return;
-    if (!event.response.bodyFile) return;
-    if (!event.response.mimeType?.includes("json")) return;
+	async onEvent(event, ctx) {
+		if (event.event !== "response.completed") return;
+		if (!event.response.bodyFile) return;
+		if (!event.response.mimeType?.includes("json")) return;
 
-    const source = ctx.resolveRunPath(event.response.bodyFile);
-    const safeRequestId = event.request.requestId.replace(
-      /[^A-Za-z0-9._-]/g,
-      "_",
-    );
-    const output = ctx.resolvePluginPath(`${safeRequestId}.json`);
+		const source = ctx.resolveRunPath(event.response.bodyFile);
+		const requestIdPattern = /[^A-Za-z0-9._-]/gu;
+		const safeRequestId = event.request.requestId.replace(requestIdPattern, "_");
+		const output = ctx.resolvePluginPath(`${safeRequestId}.json`);
 
-    await mkdir(dirname(output), { recursive: true });
-    await writeFile(output, await readFile(source));
-  },
+		await mkdir(dirname(output), { recursive: true });
+		await Bun.write(output, Bun.file(source));
+	},
 } satisfies LoggerPlugin;
 ```
 
