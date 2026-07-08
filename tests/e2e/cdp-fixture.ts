@@ -2,13 +2,11 @@ import { it } from "bun:test";
 import { mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 
-import CDP from "chrome-remote-interface";
-
 import type { CapturedApiRecord } from "./assertions";
 import waitFor from "./poll";
 
-type BrowserProcess = ReturnType<typeof Bun.spawn>;
 type LoggerProcess = ReturnType<typeof Bun.spawn> & {
+	stderr: ReadableStream<Uint8Array>;
 	stdout: ReadableStream<Uint8Array>;
 };
 type LoggerStdoutReader = {
@@ -29,17 +27,15 @@ type RunDirectories = {
 };
 
 type TestContext = RunDirectories & {
-	browser: BrowserProcess;
 	cdpEndpoint: string;
 	fixtureServer: ReturnType<typeof Bun.serve>;
 	logger: LoggerProcess;
 };
 
 const browserPath = process.env["E2E_BROWSER_PATH"];
-const connectCdp = CDP;
-const getCdpVersion = CDP.Version;
 const e2eRoot = join(process.cwd(), ".e2e");
 const cleanupPaths: string[] = [];
+const LOGGER_STOP_TIMEOUT_MS = 5_000;
 
 const maybeBrowserIt = browserPath ? it : it.skip;
 
@@ -114,51 +110,57 @@ const createRunDirectories = async (): Promise<RunDirectories> => {
 	return { captureDirectory, netLogPath, profileDirectory, runRoot };
 };
 
-const startBrowser = (options: {
+const startLogger = (options: {
+	browserPath: string;
+	captureDirectory: string;
 	cdpPort: number;
-	netLogPath: string;
-	path: string;
 	profileDirectory: string;
-}): BrowserProcess =>
-	Bun.spawn(
+}): LoggerProcess => {
+	const process = Bun.spawn(
 		[
-			options.path,
-			"--headless=new",
-			"--disable-gpu",
-			"--no-first-run",
-			"--no-default-browser-check",
-			"--no-sandbox",
-			`--user-data-dir=${options.profileDirectory}`,
-			"--remote-debugging-address=127.0.0.1",
-			`--remote-debugging-port=${options.cdpPort}`,
-			`--log-net-log=${options.netLogPath}`,
-			"--net-log-capture-mode=Everything",
+			"bun",
+			"src/index.ts",
+			"--launch-browser",
+			"--browser-path",
+			options.browserPath,
+			"--browser-profile",
+			options.profileDirectory,
+			"--cdp-port",
+			String(options.cdpPort),
+			"--browser-arg=--no-sandbox",
+			"--browser-arg=--disable-dev-shm-usage",
+			"--out",
+			options.captureDirectory,
 		],
 		{
-			stderr: "ignore",
-			stdout: "ignore",
-		},
-	);
-
-const startLogger = (cdpEndpoint: string, captureDirectory: string): LoggerProcess => {
-	const process = Bun.spawn(
-		["bun", "src/index.ts", "--cdp", cdpEndpoint, "--out", captureDirectory],
-		{
-			stderr: "ignore",
+			stderr: "pipe",
 			stdout: "pipe",
 		},
 	);
 	if (!(process.stdout instanceof ReadableStream)) {
 		throw new Error("Logger stdout was not piped.");
 	}
+	if (!(process.stderr instanceof ReadableStream)) {
+		throw new Error("Logger stderr was not piped.");
+	}
 
 	return process as LoggerProcess;
 };
 
-const readUntilLoggerReady = async (reader: LoggerStdoutReader, seen = ""): Promise<void> => {
+const readLoggerStderr = async (logger: LoggerProcess): Promise<string> => {
+	await logger.exited.catch(() => undefined);
+	return await new Response(logger.stderr).text();
+};
+
+const readUntilLoggerReady = async (
+	logger: LoggerProcess,
+	reader: LoggerStdoutReader,
+	seen = "",
+): Promise<void> => {
 	const { done, value } = await reader.read();
 	if (done) {
-		throw new Error(`Logger exited before becoming ready. Output: ${seen}`);
+		const stderr = await readLoggerStderr(logger);
+		throw new Error(`Logger exited before becoming ready. Output: ${seen}\nStderr: ${stderr}`);
 	}
 
 	const output = `${seen}${new TextDecoder().decode(value)}`;
@@ -166,18 +168,11 @@ const readUntilLoggerReady = async (reader: LoggerStdoutReader, seen = ""): Prom
 		return;
 	}
 
-	await readUntilLoggerReady(reader, output);
-};
-
-const waitForCdp = async (cdpEndpoint: string): Promise<void> => {
-	await waitFor("CDP /json/version", async () => {
-		const response = await fetch(`${cdpEndpoint}/json/version`);
-		return response.ok ? true : undefined;
-	});
+	await readUntilLoggerReady(logger, reader, output);
 };
 
 const waitForLoggerReady = async (logger: LoggerProcess): Promise<void> => {
-	await readUntilLoggerReady(logger.stdout.getReader() as unknown as LoggerStdoutReader);
+	await readUntilLoggerReady(logger, logger.stdout.getReader() as unknown as LoggerStdoutReader);
 };
 
 const openNewPage = async (cdpEndpoint: string, url: string): Promise<void> => {
@@ -216,43 +211,32 @@ const startContext = async (path = requireBrowserPath()): Promise<TestContext> =
 	const fixtureServer = startFixtureServer();
 	const cdpPort = reservePort();
 	const cdpEndpoint = `http://127.0.0.1:${cdpPort}`;
-	const browser = startBrowser({ ...directories, cdpPort, path });
-	await waitForCdp(cdpEndpoint);
-	const logger = startLogger(cdpEndpoint, directories.captureDirectory);
+	const logger = startLogger({
+		browserPath: path,
+		captureDirectory: directories.captureDirectory,
+		cdpPort,
+		profileDirectory: directories.profileDirectory,
+	});
 	await waitForLoggerReady(logger);
 
-	return { ...directories, browser, cdpEndpoint, fixtureServer, logger };
+	return { ...directories, cdpEndpoint, fixtureServer, logger };
 };
 
 const stopLogger = async (logger: LoggerProcess): Promise<void> => {
 	logger.kill("SIGTERM");
-	await logger.exited.catch(() => undefined);
-};
-
-const closeBrowserThroughCdp = async (context: TestContext): Promise<void> => {
-	const endpoint = new URL(context.cdpEndpoint);
-	const connectionOptions = {
-		host: endpoint.hostname,
-		port: Number(endpoint.port),
-	};
-	const version = await getCdpVersion(connectionOptions);
-	const client = await connectCdp({ ...connectionOptions, target: version.webSocketDebuggerUrl });
-	await client.Browser.close();
-	await context.browser.exited.catch(() => undefined);
-};
-
-const stopBrowser = async (context: TestContext): Promise<void> => {
-	try {
-		await closeBrowserThroughCdp(context);
-	} catch {
-		context.browser.kill("SIGTERM");
-		await context.browser.exited.catch(() => undefined);
+	const stopped = await Promise.race([
+		logger.exited.then(() => true),
+		Bun.sleep(LOGGER_STOP_TIMEOUT_MS).then(() => false),
+	]).catch(() => true);
+	if (!stopped) {
+		logger.kill("SIGKILL");
+		await logger.exited.catch(() => undefined);
 	}
 };
 
 const closeContext = async (context: TestContext): Promise<void> => {
 	context.fixtureServer.stop(true);
-	await Promise.all([stopLogger(context.logger), stopBrowser(context)]);
+	await stopLogger(context.logger);
 };
 
 const loadPageAndWaitForCapture = async (context: TestContext): Promise<void> => {
