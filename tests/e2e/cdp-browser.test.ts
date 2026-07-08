@@ -16,7 +16,7 @@ describe("CDP browser e2e", () => {
 	afterEach(cleanupRuns);
 
 	maybeBrowserIt(
-		"captures a localhost JSON response and request payload from the CLI",
+		"captures localhost payloads and writes Chromium NetLog from the CLI",
 		async () => {
 			const context = await startContext();
 
@@ -25,20 +25,6 @@ describe("CDP browser e2e", () => {
 				const metadata = await findCapturedApiRecord(context.captureDirectory);
 				const bodies = await readCapturedBodies(context.captureDirectory, metadata);
 				assertCapturedApi(metadata, bodies);
-			} finally {
-				await closeContext(context);
-			}
-		},
-		BROWSER_E2E_TIMEOUT_MS,
-	);
-
-	maybeBrowserIt(
-		"writes Chromium NetLog in the capture directory",
-		async () => {
-			const context = await startContext();
-
-			try {
-				await loadPageAndWaitForCapture(context);
 			} finally {
 				await closeContext(context);
 			}

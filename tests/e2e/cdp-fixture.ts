@@ -35,6 +35,7 @@ type TestContext = RunDirectories & {
 const browserPath = process.env["E2E_BROWSER_PATH"];
 const e2eRoot = join(process.cwd(), ".e2e");
 const cleanupPaths: string[] = [];
+const LOGGER_STOP_TIMEOUT_MS = 5_000;
 
 const maybeBrowserIt = browserPath ? it : it.skip;
 
@@ -223,7 +224,14 @@ const startContext = async (path = requireBrowserPath()): Promise<TestContext> =
 
 const stopLogger = async (logger: LoggerProcess): Promise<void> => {
 	logger.kill("SIGTERM");
-	await logger.exited.catch(() => undefined);
+	const stopped = await Promise.race([
+		logger.exited.then(() => true),
+		Bun.sleep(LOGGER_STOP_TIMEOUT_MS).then(() => false),
+	]).catch(() => true);
+	if (!stopped) {
+		logger.kill("SIGKILL");
+		await logger.exited.catch(() => undefined);
+	}
 };
 
 const closeContext = async (context: TestContext): Promise<void> => {
