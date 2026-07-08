@@ -1,8 +1,8 @@
 # CDP Network Logger
 
 Local network logger for browsers that expose the Chrome DevTools Protocol
-(CDP). It launches a dedicated browser profile, connects to a local CDP
-endpoint, and saves request/response bodies plus metadata while you browse
+(CDP). It can launch a dedicated browser profile or attach to an existing local
+CDP endpoint, then saves request/response bodies plus metadata while you browse
 manually.
 
 This tool is intentionally narrow. It does not use mitmproxy, `SSLKEYLOGFILE`,
@@ -17,8 +17,7 @@ throwaway browser profile:
 - response bodies from CDP `Network.getResponseBody`
 - request payloads that the browser exposes through CDP
 - request/response metadata in append-only NDJSON
-- Chromium NetLog in the same run directory when launched with the provided
-  Chromium-family launcher
+- Chromium NetLog in the same run directory when using browser launch mode
 
 The logger is written in TypeScript for Bun. Development can happen in WSL, but
 the clean Windows target is to run the browser and logger on Windows so the
@@ -31,7 +30,7 @@ The logger observes the browser locally. The website does not receive a header,
 cookie, JavaScript variable, or protocol message saying that CDP logging is
 enabled.
 
-The launcher and logger are deliberately passive:
+Launch mode and the logger are deliberately passive:
 
 - CDP is bound to `127.0.0.1`.
 - The logger uses the CDP `Network` domain to observe completed browser network
@@ -41,9 +40,9 @@ The launcher and logger are deliberately passive:
   rewriting.
 - There is no `Runtime.evaluate`, script injection, extension injection, or
   Debugger-domain attachment.
-- The launcher does not use `--headless`, `--enable-automation`, or
+- Launch mode does not use `--headless`, `--enable-automation`, or
   `--remote-debugging-port=0`.
-- The launcher does not use `--disable-quic`; browser network behavior is kept
+- Launch mode does not use `--disable-quic`; browser network behavior is kept
   close to normal.
 - After enabling Network on an attached popup, iframe, or worker target, the
   logger sends `Runtime.runIfWaitingForDebugger` for that target session; it
@@ -61,22 +60,36 @@ it does not promise undetectability.
 
 ## Quick Start
 
-From WSL, prepare the repository and build/deploy the Windows executable:
+From WSL, prepare the repository and build the Windows executable:
 
 ```sh
 mise trust
 mise install
-mise run build-windows-from-wsl
+mise run compile --target windows-x64
+wslpath -w "$PWD/dist/cdp-response-logger-windows-x64.exe"
 ```
 
-On Windows, start a Chromium-family browser and the logger together:
+The final command prints a Windows path to the compiled executable. From
+PowerShell, either run that executable directly from the printed path or copy it
+to the persistent bin folder:
 
 ```powershell
-& "$env:LOCALAPPDATA\ChromeCdpResponseLogger\bin\start-capture.ps1"
+$base = "$env:LOCALAPPDATA\ChromeCdpResponseLogger"
+New-Item -ItemType Directory -Force "$base\bin" | Out-Null
+Copy-Item "<printed-windows-exe-path>" "$base\bin\cdp-response-logger.exe"
 ```
 
-The browser opens with a dedicated profile. Log in manually inside that profile
-and browse normally. Capture files are written under:
+Start the logger and let it launch the browser:
+
+```powershell
+& "$env:LOCALAPPDATA\ChromeCdpResponseLogger\bin\cdp-response-logger.exe" `
+  --launch-browser `
+  --browser-command chrome.exe
+```
+
+The browser opens with a dedicated profile, CDP bound to `127.0.0.1:9222`, and
+NetLog writing to the same capture directory. Log in manually inside that
+profile and browse normally. Capture files are written under:
 
 ```text
 %LOCALAPPDATA%\ChromeCdpResponseLogger\captures\<run>
@@ -84,7 +97,7 @@ and browse normally. Capture files are written under:
 
 ## Dedicated Profile
 
-A launched browser uses:
+Launch mode uses this profile by default:
 
 ```text
 %LOCALAPPDATA%\ChromeCdpResponseLogger\browser-profile
@@ -274,117 +287,105 @@ $capture.FullName
 You should see `metadata.ndjson` grow while the logger is running. Normal CDP
 misses are recorded in `errors.ndjson`.
 
-## Build And Deploy From WSL
+## Build From WSL
 
-The WSL workflow builds a Windows executable and copies it plus the launcher
-scripts into the persistent Windows bin folder:
+The WSL workflow builds a Windows executable into `dist/`:
 
 ```sh
-mise run build-windows-from-wsl
+mise install
+mise run compile --target windows-x64
+wslpath -w "$PWD/dist/cdp-response-logger-windows-x64.exe"
 ```
 
-Expected deployed path:
+Recommended copied path on Windows:
 
 ```text
 %LOCALAPPDATA%\ChromeCdpResponseLogger\bin\cdp-response-logger.exe
-```
-
-The script detects Windows `%LOCALAPPDATA%` through `cmd.exe` and `wslpath`. If
-detection fails, pass the Windows username:
-
-```sh
-mise run build-windows-from-wsl --windows-user YourWindowsUser
 ```
 
 If Bun cross-compilation from WSL fails, build on Windows instead:
 
 ```powershell
 mise install
-$out = "$env:LOCALAPPDATA\ChromeCdpResponseLogger\bin\cdp-response-logger.exe"
 mise run compile --target windows-x64
+$out = "$env:LOCALAPPDATA\ChromeCdpResponseLogger\bin\cdp-response-logger.exe"
+New-Item -ItemType Directory -Force (Split-Path $out) | Out-Null
 Copy-Item dist\cdp-response-logger-windows-x64.exe $out
 ```
 
 You can also run the TypeScript entrypoint directly on Windows with Bun:
 
 ```powershell
-bun src/index.ts --cdp http://127.0.0.1:9222 --out <capture-dir>
+bun src/index.ts --launch-browser --browser-command chrome.exe
 ```
 
-## Scripts
+## Browser Modes
 
-Start a Chromium-family browser with CDP and NetLog:
+Use launch mode when you want the logger to own the browser process. Use attach
+mode when you already started a CDP-capable browser yourself.
+
+### Launch Mode
+
+Launch mode starts the browser, owns the dedicated profile for that run, enables
+CDP, writes NetLog by default, starts capture, and closes the browser when the
+logger exits.
+
+Use a browser command from `PATH`:
 
 ```powershell
-& "$env:LOCALAPPDATA\ChromeCdpResponseLogger\bin\start-browser-cdp.ps1"
+cdp-response-logger --launch-browser --browser-command chrome.exe
 ```
 
-By default the Windows launcher resolves `chrome.exe` from `PATH`. To use
-another CDP-capable Chromium-family browser, pass its executable path or
-command:
+Or use an explicit browser executable:
 
 ```powershell
-& "$env:LOCALAPPDATA\ChromeCdpResponseLogger\bin\start-browser-cdp.ps1" `
-  -BrowserPath "C:\Program Files\Microsoft\Edge\Application\msedge.exe"
+cdp-response-logger --launch-browser `
+  --browser-path "C:\Program Files\Google\Chrome\Application\chrome.exe"
 ```
+
+Use an explicit capture directory:
 
 ```powershell
-& "$env:LOCALAPPDATA\ChromeCdpResponseLogger\bin\start-browser-cdp.ps1" `
-  -BrowserCommand chrome.exe
+cdp-response-logger --launch-browser --browser-command chrome.exe `
+  --out "$env:LOCALAPPDATA\ChromeCdpResponseLogger\captures\manual-run"
 ```
 
-Start only the logger:
+Disable NetLog for a run:
 
 ```powershell
-& "$env:LOCALAPPDATA\ChromeCdpResponseLogger\bin\run-logger.ps1"
+cdp-response-logger --launch-browser --browser-command chrome.exe --no-netlog
 ```
 
-Start both with the same capture directory:
+The logger intentionally does not auto-discover browsers. Pass either
+`--browser-command` or `--browser-path`. Launch mode uses these browser flags by
+default:
 
-```powershell
-& "$env:LOCALAPPDATA\ChromeCdpResponseLogger\bin\start-capture.ps1"
+```text
+--user-data-dir=<profile-dir>
+--remote-debugging-address=127.0.0.1
+--remote-debugging-port=<port>
+--log-net-log=<capture-dir>\netlog.json
+--net-log-capture-mode=Everything
 ```
 
-Start both with an explicit browser executable:
+The NetLog flags are omitted when `--no-netlog` is set.
 
-```powershell
-& "$env:LOCALAPPDATA\ChromeCdpResponseLogger\bin\start-capture.ps1" `
-  -BrowserPath "C:\Program Files\Google\Chrome\Application\chrome.exe"
-```
+Pass repeated `--browser-arg=<arg>` values only when your local browser
+environment requires them. For example, CI Chrome sometimes requires
+`--browser-arg=--no-sandbox`. These extra args are explicit and are not added by
+default.
 
-Start both with plugins:
+### Attach Mode
 
-```powershell
-& "$env:LOCALAPPDATA\ChromeCdpResponseLogger\bin\start-capture.ps1" `
-  -Config C:\path\logger.config.ts
-```
-
-The generic browser launcher:
-
-- creates the persistent folders
-- uses `-BrowserPath` when provided
-- otherwise resolves `-BrowserCommand` from `PATH`, defaulting to `chrome.exe`
-  on Windows
-- keeps `-ChromePath` as a compatibility alias
-- throws an error if the browser is not provided and the command is not on
-  `PATH`
-- starts the browser with `--user-data-dir`,
-  `--remote-debugging-address=127.0.0.1`,
-  `--remote-debugging-port=9222`, `--log-net-log`, and
-  `--net-log-capture-mode=Everything`
-
-On Linux/macOS, `scripts/start-browser-cdp.sh` provides the same launcher shape:
+Attach mode remains the default. Start a browser yourself with a dedicated
+profile and CDP, then run:
 
 ```sh
-scripts/start-browser-cdp.sh --browser-command google-chrome
-scripts/start-browser-cdp.sh --browser-command chromium
-scripts/start-browser-cdp.sh --browser-path /path/to/browser
+cdp-response-logger --cdp http://127.0.0.1:9222 --out <capture-dir>
 ```
 
-The shell launcher defaults to `google-chrome` from `PATH`.
-
-`scripts/start-chrome-cdp.ps1` and `scripts/start-chrome-cdp.bat` remain as
-Chrome-compatible wrappers around `start-browser-cdp.ps1`.
+Attach mode does not launch a browser or write NetLog by itself. It only
+connects to the CDP endpoint you provide.
 
 ## NetLog Warning
 
@@ -439,6 +440,13 @@ Options:
   --max-body-bytes <num>   Skip body retrieval above encoded byte length
   --config <path>          TS/JS logger config with plugin modules
   --no-plugins             Disable plugin loading from --config
+  --launch-browser         Launch and own a local CDP browser process
+  --browser-command <cmd>  Browser command for --launch-browser
+  --browser-path <path>    Browser executable path for --launch-browser
+  --browser-profile <dir>  Browser profile directory for --launch-browser
+  --browser-arg <arg>      Extra browser arg for --launch-browser
+  --cdp-port <port>        Local CDP port for --launch-browser
+  --no-netlog              Disable netlog.json in --launch-browser mode
   --help                   Show help
 ```
 

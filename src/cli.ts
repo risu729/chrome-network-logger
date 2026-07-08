@@ -2,20 +2,40 @@ import { parseArgs as parseNodeArgs } from "node:util";
 
 import { z } from "zod";
 
+import { DEFAULT_CDP_ENDPOINT, TOOL_NAME, TOOL_VERSION } from "./constants";
 import type { CliOptions } from "./types";
-
-const DEFAULT_CDP_ENDPOINT = "http://127.0.0.1:9222";
-const TOOL_NAME = "cdp-response-logger";
-const TOOL_VERSION = "0.0.0";
+import { optionalNonEmptyString, optionalStringArray, parseSafeInteger } from "./validation";
 
 type CliArgDefinition = {
 	default?: boolean | string | undefined;
 	description: string;
+	multiple?: boolean | undefined;
 	type: "boolean" | "string";
 	valueHint?: string | undefined;
 };
 
 const cliArgs = {
+	"browser-arg": {
+		description: "Extra browser arg for --launch-browser. May be repeated.",
+		multiple: true,
+		type: "string",
+		valueHint: "arg",
+	},
+	"browser-command": {
+		description: "Browser command for --launch-browser, resolved from PATH.",
+		type: "string",
+		valueHint: "command",
+	},
+	"browser-path": {
+		description: "Browser executable path for --launch-browser.",
+		type: "string",
+		valueHint: "path",
+	},
+	"browser-profile": {
+		description: "Browser profile directory for --launch-browser.",
+		type: "string",
+		valueHint: "dir",
+	},
 	config: {
 		description: "TS/JS logger config with plugin modules.",
 		type: "string",
@@ -27,6 +47,12 @@ const cliArgs = {
 		type: "string",
 		valueHint: "url",
 	},
+	"cdp-port": {
+		default: "9222",
+		description: "Local CDP port for --launch-browser.",
+		type: "string",
+		valueHint: "port",
+	},
 	exclude: {
 		description: "Do not persist matching response URLs.",
 		type: "string",
@@ -37,10 +63,19 @@ const cliArgs = {
 		type: "string",
 		valueHint: "regex",
 	},
+	"launch-browser": {
+		description: "Launch and own a local CDP browser process.",
+		type: "boolean",
+	},
 	"max-body-bytes": {
 		description: "Skip body retrieval above encoded byte length.",
 		type: "string",
 		valueHint: "number",
+	},
+	netlog: {
+		default: true,
+		description: "Write netlog.json when using --launch-browser.",
+		type: "boolean",
 	},
 	out: {
 		description: "Capture directory.",
@@ -59,7 +94,7 @@ const cliArgs = {
 } as const;
 
 type LoggerArgs = {
-	[key in keyof typeof cliArgs]?: boolean | string | undefined;
+	[key in keyof typeof cliArgs]?: boolean | string | string[] | undefined;
 } & {
 	help?: boolean | undefined;
 	version?: boolean | undefined;
@@ -88,38 +123,59 @@ const parseRegex = (value: string, flag: string): RegExp => {
 	}
 };
 
-const optionalNonEmptyString = z.preprocess(
-	(value) => (value === "" ? undefined : value),
-	z.string().optional(),
-);
+const CliOptionsSchema: z.ZodType<CliOptions> = z
+	.object({
+		browserArgs: optionalStringArray,
+		browserCommand: optionalNonEmptyString,
+		browserPath: optionalNonEmptyString,
+		browserProfile: optionalNonEmptyString,
+		config: optionalNonEmptyString,
+		cdp: z.url(),
+		cdpPort: optionalNonEmptyString.transform((value) => {
+			const port = parseSafeInteger(value, "--cdp-port", 1);
+			if (port === undefined || port > 65_535) {
+				throw new Error("--cdp-port must be an integer between 1 and 65535.");
+			}
 
-const CliOptionsSchema: z.ZodType<CliOptions> = z.object({
-	config: optionalNonEmptyString,
-	cdp: z.url(),
-	exclude: optionalNonEmptyString.transform((value) =>
-		value ? parseRegex(value, "--exclude") : undefined,
-	),
-	help: z.boolean(),
-	include: optionalNonEmptyString.transform((value) =>
-		value ? parseRegex(value, "--include") : undefined,
-	),
-	maxBodyBytes: optionalNonEmptyString.transform((value) => {
-		if (!value) {
-			return undefined;
+			return port;
+		}),
+		exclude: optionalNonEmptyString.transform((value) =>
+			value ? parseRegex(value, "--exclude") : undefined,
+		),
+		help: z.boolean(),
+		include: optionalNonEmptyString.transform((value) =>
+			value ? parseRegex(value, "--include") : undefined,
+		),
+		launchBrowser: z.boolean(),
+		maxBodyBytes: optionalNonEmptyString.transform((value) =>
+			parseSafeInteger(value, "--max-body-bytes", 0),
+		),
+		netlog: z.boolean(),
+		noPlugins: z.boolean(),
+		out: optionalNonEmptyString,
+		verbose: z.boolean(),
+		version: z.boolean(),
+	})
+	.superRefine((options, context) => {
+		if (!options.launchBrowser) {
+			return;
 		}
 
-		const parsed = Number(value);
-		if (!Number.isSafeInteger(parsed) || parsed < 0) {
-			throw new Error("--max-body-bytes must be a non-negative integer.");
+		if (!options.browserCommand && !options.browserPath) {
+			context.addIssue({
+				code: "custom",
+				message: "--launch-browser requires --browser-command or --browser-path.",
+				path: ["browserCommand"],
+			});
 		}
-
-		return parsed;
-	}),
-	noPlugins: z.boolean(),
-	out: optionalNonEmptyString,
-	verbose: z.boolean(),
-	version: z.boolean(),
-});
+		if (options.browserCommand && options.browserPath) {
+			context.addIssue({
+				code: "custom",
+				message: "Use only one of --browser-command or --browser-path.",
+				path: ["browserCommand"],
+			});
+		}
+	});
 
 const assertKnownFlags = (argv: string[]): void => {
 	for (const arg of argv) {
@@ -136,37 +192,62 @@ const assertKnownFlags = (argv: string[]): void => {
 
 const normalizeArgs = (args: LoggerArgs): CliOptions =>
 	CliOptionsSchema.parse({
+		browserArgs: args["browser-arg"],
+		browserCommand: args["browser-command"],
+		browserPath: args["browser-path"],
+		browserProfile: args["browser-profile"],
 		config: args.config,
 		cdp: args.cdp,
+		cdpPort: args["cdp-port"],
 		exclude: args.exclude,
 		help: args.help ?? false,
 		include: args.include,
+		launchBrowser: args["launch-browser"] ?? false,
 		maxBodyBytes: args["max-body-bytes"],
+		netlog: args.netlog ?? true,
 		noPlugins: args.plugins === false,
 		out: args.out,
 		verbose: args.verbose ?? false,
 		version: args.version ?? false,
 	});
 
+const createParseOption = (
+	definition: CliArgDefinition,
+): {
+	default?: boolean | string;
+	multiple?: boolean;
+	short?: string;
+	type: "boolean" | "string";
+} => {
+	const parseOption: {
+		default?: boolean | string;
+		multiple?: boolean;
+		short?: string;
+		type: "boolean" | "string";
+	} = {
+		type: definition.type,
+	};
+	if (definition.default !== undefined) {
+		parseOption.default = definition.default;
+	}
+	if (definition.multiple) {
+		parseOption.multiple = true;
+	}
+
+	return parseOption;
+};
+
 const createParseOptions = (): Record<
 	string,
-	{ default?: boolean | string; short?: string; type: "boolean" | "string" }
+	{ default?: boolean | string; multiple?: boolean; short?: string; type: "boolean" | "string" }
 > => {
 	const options: Record<
 		string,
-		{ default?: boolean | string; short?: string; type: "boolean" | "string" }
+		{ default?: boolean | string; multiple?: boolean; short?: string; type: "boolean" | "string" }
 	> = {};
 
 	for (const [name, definition] of Object.entries(cliArgs)) {
-		const parseOption: { default?: boolean | string; short?: string; type: "boolean" | "string" } =
-			{
-				type: definition.type,
-			};
-		if ("default" in definition) {
-			parseOption.default = definition.default;
-		}
-
-		options[name] = parseOption;
+		options[name] = createParseOption(definition);
 	}
 
 	options["help"] = { short: "h", type: "boolean" };

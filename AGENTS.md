@@ -23,7 +23,7 @@ The primary runtime target is Windows:
 - Chrome runs on Windows.
 - The logger should run on Windows and connect to `127.0.0.1:9222`.
 - Development can happen in WSL.
-- WSL-to-Windows deployment should use the configured mise tasks.
+- WSL-to-Windows builds should use `mise run compile --target windows-x64`.
 
 Use the persistent Windows folders documented in the README. Do not introduce
 temporary capture output under `%TEMP%` or WSL `/tmp`.
@@ -55,7 +55,6 @@ Common commands:
 - `mise run test`
 - `mise run check --lint`
 - `mise run compile`
-- `mise run build-windows-from-wsl`
 
 The repository uses `hk`, `oxlint`, `oxfmt`, `tombi`, `rumdl`, YAML tooling,
 `typos`, and GitHub Actions linters through `mise`. Keep config changes
@@ -85,7 +84,7 @@ Keep CDP use passive by default:
 - Do not add Runtime or Debugger usage unless there is a narrow, documented
   reason.
 
-Preserve normal Chrome behavior in launch scripts:
+Preserve normal browser behavior in launch mode:
 
 - Use a dedicated profile.
 - Do not attach to the default Chrome profile.
