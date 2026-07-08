@@ -16,6 +16,21 @@ type CliArgDefinition = {
 };
 
 const cliArgs = {
+	"browser-command": {
+		description: "Browser command for --launch-browser, resolved from PATH.",
+		type: "string",
+		valueHint: "command",
+	},
+	"browser-path": {
+		description: "Browser executable path for --launch-browser.",
+		type: "string",
+		valueHint: "path",
+	},
+	"browser-profile": {
+		description: "Browser profile directory for --launch-browser.",
+		type: "string",
+		valueHint: "dir",
+	},
 	config: {
 		description: "TS/JS logger config with plugin modules.",
 		type: "string",
@@ -27,6 +42,12 @@ const cliArgs = {
 		type: "string",
 		valueHint: "url",
 	},
+	"cdp-port": {
+		default: "9222",
+		description: "Local CDP port for --launch-browser.",
+		type: "string",
+		valueHint: "port",
+	},
 	exclude: {
 		description: "Do not persist matching response URLs.",
 		type: "string",
@@ -37,10 +58,19 @@ const cliArgs = {
 		type: "string",
 		valueHint: "regex",
 	},
+	"launch-browser": {
+		description: "Launch and own a local CDP browser process.",
+		type: "boolean",
+	},
 	"max-body-bytes": {
 		description: "Skip body retrieval above encoded byte length.",
 		type: "string",
 		valueHint: "number",
+	},
+	netlog: {
+		default: true,
+		description: "Write netlog.json when using --launch-browser.",
+		type: "boolean",
 	},
 	out: {
 		description: "Capture directory.",
@@ -93,33 +123,75 @@ const optionalNonEmptyString = z.preprocess(
 	z.string().optional(),
 );
 
-const CliOptionsSchema: z.ZodType<CliOptions> = z.object({
-	config: optionalNonEmptyString,
-	cdp: z.url(),
-	exclude: optionalNonEmptyString.transform((value) =>
-		value ? parseRegex(value, "--exclude") : undefined,
-	),
-	help: z.boolean(),
-	include: optionalNonEmptyString.transform((value) =>
-		value ? parseRegex(value, "--include") : undefined,
-	),
-	maxBodyBytes: optionalNonEmptyString.transform((value) => {
-		if (!value) {
-			return undefined;
+const parseSafeInteger = (
+	value: string | undefined,
+	flag: string,
+	minimum: number,
+): number | undefined => {
+	if (!value) {
+		return undefined;
+	}
+
+	const parsed = Number(value);
+	if (!Number.isSafeInteger(parsed) || parsed < minimum) {
+		throw new Error(`${flag} must be an integer greater than or equal to ${minimum}.`);
+	}
+
+	return parsed;
+};
+
+const CliOptionsSchema: z.ZodType<CliOptions> = z
+	.object({
+		browserCommand: optionalNonEmptyString,
+		browserPath: optionalNonEmptyString,
+		browserProfile: optionalNonEmptyString,
+		config: optionalNonEmptyString,
+		cdp: z.url(),
+		cdpPort: optionalNonEmptyString.transform((value) => {
+			const port = parseSafeInteger(value, "--cdp-port", 1);
+			if (port === undefined || port > 65_535) {
+				throw new Error("--cdp-port must be an integer between 1 and 65535.");
+			}
+
+			return port;
+		}),
+		exclude: optionalNonEmptyString.transform((value) =>
+			value ? parseRegex(value, "--exclude") : undefined,
+		),
+		help: z.boolean(),
+		include: optionalNonEmptyString.transform((value) =>
+			value ? parseRegex(value, "--include") : undefined,
+		),
+		launchBrowser: z.boolean(),
+		maxBodyBytes: optionalNonEmptyString.transform((value) =>
+			parseSafeInteger(value, "--max-body-bytes", 0),
+		),
+		netlog: z.boolean(),
+		noPlugins: z.boolean(),
+		out: optionalNonEmptyString,
+		verbose: z.boolean(),
+		version: z.boolean(),
+	})
+	.superRefine((options, context) => {
+		if (!options.launchBrowser) {
+			return;
 		}
 
-		const parsed = Number(value);
-		if (!Number.isSafeInteger(parsed) || parsed < 0) {
-			throw new Error("--max-body-bytes must be a non-negative integer.");
+		if (!options.browserCommand && !options.browserPath) {
+			context.addIssue({
+				code: "custom",
+				message: "--launch-browser requires --browser-command or --browser-path.",
+				path: ["browserCommand"],
+			});
 		}
-
-		return parsed;
-	}),
-	noPlugins: z.boolean(),
-	out: optionalNonEmptyString,
-	verbose: z.boolean(),
-	version: z.boolean(),
-});
+		if (options.browserCommand && options.browserPath) {
+			context.addIssue({
+				code: "custom",
+				message: "Use only one of --browser-command or --browser-path.",
+				path: ["browserCommand"],
+			});
+		}
+	});
 
 const assertKnownFlags = (argv: string[]): void => {
 	for (const arg of argv) {
@@ -136,12 +208,18 @@ const assertKnownFlags = (argv: string[]): void => {
 
 const normalizeArgs = (args: LoggerArgs): CliOptions =>
 	CliOptionsSchema.parse({
+		browserCommand: args["browser-command"],
+		browserPath: args["browser-path"],
+		browserProfile: args["browser-profile"],
 		config: args.config,
 		cdp: args.cdp,
+		cdpPort: args["cdp-port"],
 		exclude: args.exclude,
 		help: args.help ?? false,
 		include: args.include,
+		launchBrowser: args["launch-browser"] ?? false,
 		maxBodyBytes: args["max-body-bytes"],
+		netlog: args.netlog ?? true,
 		noPlugins: args.plugins === false,
 		out: args.out,
 		verbose: args.verbose ?? false,

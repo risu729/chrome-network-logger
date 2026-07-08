@@ -3,12 +3,18 @@ import type { Protocol } from "devtools-protocol";
 type MaybePromise<T> = T | Promise<T>;
 
 type CliOptions = {
+	browserCommand?: string | undefined;
+	browserPath?: string | undefined;
+	browserProfile?: string | undefined;
 	config?: string | undefined;
 	cdp: string;
+	cdpPort: number;
 	exclude?: RegExp | undefined;
 	help: boolean;
 	include?: RegExp | undefined;
+	launchBrowser: boolean;
 	maxBodyBytes?: number | undefined;
+	netlog: boolean;
 	noPlugins: boolean;
 	out?: string | undefined;
 	verbose: boolean;

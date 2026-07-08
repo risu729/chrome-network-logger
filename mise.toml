@@ -29,9 +29,6 @@ experimental = true
 [settings.npm]
 package_manager = "bun"
 
-[task_config]
-includes = ["tasks"]
-
 [deps.bun]
 auto = true
 sources = ["package.json", "bun.lock"]
@@ -44,7 +41,13 @@ run = "bun test"
 
 [tasks.test-e2e]
 description = "Run browser-backed Bun e2e tests."
-run = "bun test tests/e2e"
+run = '''
+if command -v xvfb-run >/dev/null 2>&1; then
+  xvfb-run -a bun test tests/e2e
+else
+  bun test tests/e2e
+fi
+'''
 
 [tasks.check]
 description = "Run hk linters and formatters."
