@@ -12,6 +12,7 @@ type CliOptions = {
 	noPlugins: boolean;
 	out?: string | undefined;
 	verbose: boolean;
+	version: boolean;
 };
 
 type RunInfo = {
