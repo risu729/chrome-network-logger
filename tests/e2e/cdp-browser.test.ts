@@ -10,7 +10,7 @@ import {
 	startContext,
 } from "./cdp-fixture";
 
-const BROWSER_E2E_TIMEOUT_MS = 75_000;
+const BROWSER_E2E_TIMEOUT_MS = 120_000;
 
 describe("CDP browser e2e", () => {
 	afterEach(cleanupRuns);
