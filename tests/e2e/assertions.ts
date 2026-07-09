@@ -52,14 +52,18 @@ const parseNetLog = (content: string): NetLogRecord | undefined => {
 };
 
 const readNetLog = async (path: string): Promise<NetLogRecord> =>
-	await waitFor("complete NetLog JSON", async () => {
-		const file = Bun.file(path);
-		if (!(await file.exists()) || file.size === 0) {
-			return undefined;
-		}
+	await waitFor(
+		"complete NetLog JSON",
+		async () => {
+			const file = Bun.file(path);
+			if (!(await file.exists()) || file.size === 0) {
+				return undefined;
+			}
 
-		return parseNetLog(await file.text());
-	});
+			return parseNetLog(await file.text());
+		},
+		{ deadline: Date.now() + 30_000 },
+	);
 
 const assertNetLog = (netLog: NetLogRecord): void => {
 	expect(netLog.constants).toBeDefined();

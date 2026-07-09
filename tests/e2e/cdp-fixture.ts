@@ -2,6 +2,8 @@ import { it } from "bun:test";
 import { mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 
+import CDP from "chrome-remote-interface";
+
 import type { CapturedApiRecord } from "./assertions";
 import waitFor from "./poll";
 
@@ -35,7 +37,9 @@ type TestContext = RunDirectories & {
 const browserPath = process.env["E2E_BROWSER_PATH"];
 const e2eRoot = join(process.cwd(), ".e2e");
 const cleanupPaths: string[] = [];
-const LOGGER_STOP_TIMEOUT_MS = 5_000;
+const LOGGER_STOP_TIMEOUT_MS = 15_000;
+const connectCdp = CDP;
+const getCdpVersion = CDP.Version;
 
 const maybeBrowserIt = browserPath ? it : it.skip;
 
@@ -222,21 +226,41 @@ const startContext = async (path = requireBrowserPath()): Promise<TestContext> =
 	return { ...directories, cdpEndpoint, fixtureServer, logger };
 };
 
-const stopLogger = async (logger: LoggerProcess): Promise<void> => {
-	logger.kill("SIGTERM");
-	const stopped = await Promise.race([
+const waitForLoggerExit = async (logger: LoggerProcess): Promise<boolean> =>
+	await Promise.race([
 		logger.exited.then(() => true),
 		Bun.sleep(LOGGER_STOP_TIMEOUT_MS).then(() => false),
 	]).catch(() => true);
-	if (!stopped) {
+
+const forceStopLogger = async (logger: LoggerProcess): Promise<void> => {
+	logger.kill("SIGTERM");
+	if (!(await waitForLoggerExit(logger))) {
 		logger.kill("SIGKILL");
 		await logger.exited.catch(() => undefined);
 	}
 };
 
+const closeBrowserThroughCdp = async (cdpEndpoint: string): Promise<void> => {
+	const endpoint = new URL(cdpEndpoint);
+	const connectionOptions = {
+		host: endpoint.hostname,
+		port: Number(endpoint.port),
+	};
+	const version = await getCdpVersion(connectionOptions);
+	const client = await connectCdp({ ...connectionOptions, target: version.webSocketDebuggerUrl });
+	await client.Browser.close();
+};
+
 const closeContext = async (context: TestContext): Promise<void> => {
 	context.fixtureServer.stop(true);
-	await stopLogger(context.logger);
+	try {
+		await closeBrowserThroughCdp(context.cdpEndpoint);
+		if (!(await waitForLoggerExit(context.logger))) {
+			await forceStopLogger(context.logger);
+		}
+	} catch {
+		await forceStopLogger(context.logger);
+	}
 };
 
 const loadPageAndWaitForCapture = async (context: TestContext): Promise<void> => {
