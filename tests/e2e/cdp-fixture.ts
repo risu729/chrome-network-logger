@@ -2,6 +2,8 @@ import { it } from "bun:test";
 import { mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 
+import { READY_MESSAGE } from "kuebiko";
+
 import type { CapturedApiRecord } from "./assertions";
 import waitFor from "./poll";
 
@@ -128,7 +130,7 @@ const consumeLoggerStdout = async (
 				write: (chunk) => {
 					process.stdout.write(chunk);
 					state.output += state.decoder.decode(chunk, { stream: true });
-					if (!state.ready && state.output.includes("logger running; press Ctrl-C to stop")) {
+					if (!state.ready && state.output.split(/\r?\n/u).includes(READY_MESSAGE)) {
 						state.ready = true;
 						state.readiness.resolve();
 					}

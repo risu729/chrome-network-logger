@@ -83,7 +83,7 @@ describe("parseArgs", () => {
 	});
 
 	it("renders local help output", () => {
-		expect(renderHelp()).toContain("cdp-response-logger [options]");
+		expect(renderHelp()).toContain("kuebiko [options]");
 		expect(renderHelp()).toContain("--no-plugins");
 	});
 });
