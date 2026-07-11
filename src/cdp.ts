@@ -535,6 +535,7 @@ class CdpResponseLogger {
 
 type StartedCdpLogger = {
 	close: () => Promise<void>;
+	closeBrowser: () => Promise<void>;
 	closed: Promise<void>;
 };
 
@@ -554,6 +555,7 @@ const startCdpLogger = async (options: StartLoggerOptions): Promise<StartedCdpLo
 	await logger.start();
 	return {
 		close: () => logger.close(),
+		closeBrowser: () => client.Browser.close(),
 		closed,
 	};
 };
