@@ -1,14 +1,12 @@
 name: CI
 on:
-  push:
-    branches:
-      - main
   pull_request:
     branches:
       - main
+  workflow_call:
   workflow_dispatch:
 concurrency:
-  group: ${{ github.workflow }}-${{ case(github.event_name == 'pull_request', github.event.pull_request.number, github.ref) }}
+  group: ci-${{ case(github.event_name == 'pull_request', github.event.pull_request.number, github.ref) }}
   cancel-in-progress: true
 permissions: {}
 defaults:
@@ -114,6 +112,7 @@ jobs:
         run: |
           test -f "${BINARY_PATH}"
           "${BINARY_PATH}" --help
+          test "$("${BINARY_PATH}" --version)" = "0.0.0-development"
         env:
           BINARY_PATH: ${{ matrix.binary }}
       - name: Compile binary
@@ -130,6 +129,10 @@ jobs:
             throw "Expected binary does not exist: $env:BINARY_PATH"
           }
           & $env:BINARY_PATH --help
+          $Version = & $env:BINARY_PATH --version
+          if ($Version -ne "0.0.0-development") {
+            throw "Unexpected binary version: $Version"
+          }
         env:
           BINARY_PATH: ${{ matrix.binary }}
   ci-check:
