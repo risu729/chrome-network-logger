@@ -1,15 +1,13 @@
 name: CI
 on:
-  push:
-    branches:
-      - main
   pull_request:
     branches:
       - main
+  workflow_call:
   workflow_dispatch:
 concurrency:
-  group: ${{ github.workflow }}-${{ case(github.event_name == 'pull_request', github.event.pull_request.number, github.ref) }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  group: ci-${{ case(github.event_name == 'pull_request', github.event.pull_request.number, github.ref) }}
+  cancel-in-progress: true
 permissions: {}
 defaults:
   run:
@@ -137,19 +135,6 @@ jobs:
           }
         env:
           BINARY_PATH: ${{ matrix.binary }}
-  release:
-    name: Release
-    needs:
-      - lint
-      - test
-      - e2e
-      - build
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && github.repository_owner == 'risu729'
-    permissions:
-      contents: write # semantic-release creates tags and GitHub releases
-      id-token: write # actions/attest obtains a Sigstore signing certificate
-      attestations: write # actions/attest publishes build provenance
-    uses: ./.github/workflows/release.yml
   ci-check:
     name: CI Check
     needs:
@@ -157,7 +142,6 @@ jobs:
       - test
       - e2e
       - build
-      - release
     if: ${{ !cancelled() && (contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')) }}
     runs-on: ubuntu-24.04
     timeout-minutes: 5

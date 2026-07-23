@@ -1,13 +1,28 @@
 name: Release
 on:
-  workflow_call:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
 permissions: {}
 defaults:
   run:
     shell: bash
 jobs:
+  validate:
+    name: CI
+    permissions:
+      actions: read # actions-timeline reads workflow run metadata
+      contents: read # CI jobs check out the repository
+    uses: ./.github/workflows/ci.yml
   release:
     name: Release
+    needs:
+      - validate
+    if: github.ref == 'refs/heads/main' && github.repository_owner == 'risu729'
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     permissions:
