@@ -1,3 +1,5 @@
+import { setTimeout as sleep } from "node:timers/promises";
+
 type WaitState = {
 	deadline: number;
 	lastError?: unknown;
@@ -9,6 +11,11 @@ type WaitOptions = {
 	signal?: AbortSignal | undefined;
 };
 
+type WaitRead<T> = {
+	result: T | undefined;
+	state: WaitState;
+};
+
 const assertWaitActive = (description: string, state: WaitState): void => {
 	if (state.signal?.aborted) {
 		throw state.signal.reason ?? new Error(`Stopped waiting for ${description}`);
@@ -18,25 +25,37 @@ const assertWaitActive = (description: string, state: WaitState): void => {
 	}
 };
 
+const readWaitValue = async <T>(
+	read: () => Promise<T | undefined>,
+	state: WaitState,
+): Promise<WaitRead<T>> => {
+	try {
+		return { result: await read(), state };
+	} catch (error) {
+		return { result: undefined, state: { ...state, lastError: error } };
+	}
+};
+
+const waitForNextRead = async (state: WaitState): Promise<void> => {
+	await sleep(Math.min(250, state.deadline - Date.now()), undefined, {
+		signal: state.signal,
+	});
+};
+
 const waitForState = async <T>(
 	description: string,
 	read: () => Promise<T | undefined>,
 	state: WaitState,
 ): Promise<T> => {
 	assertWaitActive(description, state);
-
-	try {
-		const result = await read();
-		if (result !== undefined) {
-			return result;
-		}
-	} catch (error) {
-		await Bun.sleep(250);
-		return await waitForState(description, read, { ...state, lastError: error });
+	const { result, state: nextState } = await readWaitValue(read, state);
+	assertWaitActive(description, nextState);
+	if (result !== undefined) {
+		return result;
 	}
 
-	await Bun.sleep(250);
-	return await waitForState(description, read, state);
+	await waitForNextRead(nextState);
+	return await waitForState(description, read, nextState);
 };
 
 const waitFor = async <T>(

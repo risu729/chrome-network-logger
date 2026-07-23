@@ -1,5 +1,4 @@
 import CDP from "chrome-remote-interface";
-import { targetAttachedLogPrefix } from "kuebiko";
 
 type PageContext = {
 	cdpPort: number;
@@ -9,7 +8,6 @@ type PageContext = {
 };
 
 const connectCdp = CDP;
-const createCdpTarget = CDP.New;
 const getCdpVersion = CDP.Version;
 
 const cdpConnectionOptions = (cdpPort: number): { host: string; port: number } => ({
@@ -17,33 +15,29 @@ const cdpConnectionOptions = (cdpPort: number): { host: string; port: number } =
 	port: cdpPort,
 });
 
-const navigatePage = async (cdpPort: number, target: CDP.Target, url: string): Promise<void> => {
-	const client = await connectCdp({ ...cdpConnectionOptions(cdpPort), target });
+const connectBrowser = async (cdpPort: number): Promise<CDP.Client> => {
+	const connectionOptions = cdpConnectionOptions(cdpPort);
+	const version = await getCdpVersion(connectionOptions);
+	return await connectCdp({
+		...connectionOptions,
+		target: version.webSocketDebuggerUrl,
+	});
+};
+
+const openNewPage = async (context: PageContext, url: string): Promise<void> => {
+	const client = await connectBrowser(context.cdpPort);
 	try {
-		await client.Page.navigate({ url });
+		const { targetId } = await client.Target.createTarget({ url: "about:blank" });
+		await context.loggerStdout.waitFor(`id=${targetId}`);
+		const { sessionId } = await client.Target.attachToTarget({ flatten: true, targetId });
+		await client.send("Page.navigate", { url }, sessionId);
 	} finally {
 		await client.close();
 	}
 };
 
-const openNewPage = async (context: PageContext, url: string): Promise<void> => {
-	const target = await createCdpTarget({
-		...cdpConnectionOptions(context.cdpPort),
-		url: "about:blank",
-	});
-	await context.loggerStdout.waitFor(
-		`${targetAttachedLogPrefix({ targetId: target.id, type: target.type })} session=`,
-	);
-	await navigatePage(context.cdpPort, target, url);
-};
-
 const requestBrowserClose = async (cdpPort: number): Promise<void> => {
-	const connectionOptions = cdpConnectionOptions(cdpPort);
-	const version = await getCdpVersion(connectionOptions);
-	const client = await connectCdp({
-		...connectionOptions,
-		target: version.webSocketDebuggerUrl,
-	});
+	const client = await connectBrowser(cdpPort);
 	try {
 		await client.Browser.close();
 	} finally {

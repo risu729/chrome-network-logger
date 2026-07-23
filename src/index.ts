@@ -3,7 +3,7 @@ import { join } from "node:path";
 
 import { startBrowser } from "./browser";
 import type { StartedBrowser } from "./browser";
-import { startCdpLogger, targetAttachedLogPrefix } from "./cdp";
+import { startCdpLogger } from "./cdp";
 import {
 	DEFAULT_CDP_ENDPOINT,
 	READY_MESSAGE,
@@ -149,7 +149,6 @@ export {
 	parseArgs,
 	renderHelp,
 	runLogger,
-	targetAttachedLogPrefix,
 };
 export type {
 	HookEvent,

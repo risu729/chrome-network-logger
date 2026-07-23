@@ -139,10 +139,6 @@ const createCompletedMetadata = (
 const isInspectableTarget = (targetInfo: Protocol.Target.TargetInfo): boolean =>
 	TARGET_TYPES.has(targetInfo.type);
 
-const targetAttachedLogPrefix = (
-	targetInfo: Pick<Protocol.Target.TargetInfo, "targetId" | "type">,
-): string => `attached target=${targetInfo.type} id=${targetInfo.targetId}`;
-
 const headerValue = (
 	headers: Protocol.Network.Headers | undefined,
 	name: string,
@@ -291,7 +287,9 @@ class CdpResponseLogger {
 
 		try {
 			await this.#client.Network.enable(NETWORK_BUFFER_OPTIONS, event.sessionId);
-			this.#log(`${targetAttachedLogPrefix(event.targetInfo)} session=${event.sessionId}`);
+			this.#log(
+				`attached target=${event.targetInfo.type} session=${event.sessionId} id=${event.targetInfo.targetId}`,
+			);
 		} catch (error) {
 			await this.#recordCaptureError(createErrorRecord("Network.enable", session, error));
 		}
@@ -586,10 +584,4 @@ const startCdpLogger = async (options: StartLoggerOptions): Promise<StartedCdpLo
 	};
 };
 
-export {
-	CdpResponseLogger,
-	NETWORK_BUFFER_OPTIONS,
-	createCompletedMetadata,
-	startCdpLogger,
-	targetAttachedLogPrefix,
-};
+export { CdpResponseLogger, NETWORK_BUFFER_OPTIONS, createCompletedMetadata, startCdpLogger };

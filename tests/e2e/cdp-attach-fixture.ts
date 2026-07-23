@@ -110,8 +110,9 @@ const waitForCdp = async (
 		await waitFor(
 			"browser CDP endpoint",
 			async () => {
+				const timeout = Math.max(1, Math.min(CDP_FETCH_TIMEOUT_MS, deadline - Date.now()));
 				const response = await fetch(`${cdpEndpoint}/json/version`, {
-					signal: AbortSignal.timeout(CDP_FETCH_TIMEOUT_MS),
+					signal: AbortSignal.any([signal, AbortSignal.timeout(timeout)]),
 				});
 				return response.ok ? true : undefined;
 			},
