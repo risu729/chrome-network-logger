@@ -1,8 +1,11 @@
-param(
-  [string]$Target = "all"
-)
+#!/usr/bin/env pwsh
+#MISE description="Compile local binaries."
+#USAGE flag "--target <target>" default="all" help="Target platform: all, linux-x64, macos-arm64, or windows-x64" {
+#USAGE   choices "all" "linux-x64" "macos-arm64" "windows-x64"
+#USAGE }
 
 $ErrorActionPreference = "Stop"
+$Target = if ($env:usage_target) { $env:usage_target } else { "all" }
 
 function Invoke-Compile {
   param(
@@ -33,11 +36,5 @@ switch ($Target) {
   }
   "windows-x64" {
     Invoke-Compile -BunTarget "bun-windows-x64" -OutputPath "dist/kuebiko-windows-x64.exe"
-  }
-  default {
-    [Console]::Error.WriteLine(
-      "Unsupported target: $Target. Use all, linux-x64, macos-arm64, or windows-x64."
-    )
-    exit 2
   }
 }
