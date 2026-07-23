@@ -287,7 +287,9 @@ class CdpResponseLogger {
 
 		try {
 			await this.#client.Network.enable(NETWORK_BUFFER_OPTIONS, event.sessionId);
-			this.#log(`attached target=${event.targetInfo.type} session=${event.sessionId}`);
+			this.#log(
+				`attached target=${event.targetInfo.type} session=${event.sessionId} id=${event.targetInfo.targetId}`,
+			);
 		} catch (error) {
 			await this.#recordCaptureError(createErrorRecord("Network.enable", session, error));
 		}
