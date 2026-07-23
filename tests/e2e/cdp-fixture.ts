@@ -15,7 +15,7 @@ type LoggerProcess = ReturnType<typeof Bun.spawn> & {
 type LoggerStdout = {
 	completed: Promise<string>;
 	ready: Promise<void>;
-	waitForNext: (text: string) => Promise<void>;
+	waitFor: (text: string) => Promise<void>;
 };
 
 type LoggerStdoutState = {
@@ -40,6 +40,7 @@ type RunDirectories = {
 
 type TestContext = RunDirectories & {
 	cdpEndpoint: string;
+	cdpPort: number;
 	fixtureServer: ReturnType<typeof Bun.serve>;
 	logger: LoggerProcess;
 	loggerStdout: LoggerStdout;
@@ -163,10 +164,9 @@ const captureLoggerStdout = (stdout: ReadableStream<Uint8Array>): LoggerStdout =
 	return {
 		completed: consumeLoggerStdout(stdout, state),
 		ready: state.readiness.promise,
-		waitForNext: async (text) => {
-			const initialCount = state.output.split(text).length;
+		waitFor: async (text) => {
 			await waitFor(`logger output containing ${text}`, () =>
-				Promise.resolve(state.output.split(text).length > initialCount ? true : undefined),
+				Promise.resolve(state.output.includes(text) ? true : undefined),
 			);
 		},
 	};
@@ -179,6 +179,7 @@ const startLoggerProcess = (args: string[]): { logger: LoggerProcess; stdout: Lo
 		stdout: "pipe",
 	});
 	if (!(process.stdout instanceof ReadableStream)) {
+		process.kill("SIGKILL");
 		throw new Error("Logger stdout was not piped.");
 	}
 	const logger = process as LoggerProcess;
@@ -240,7 +241,7 @@ const startContext = async (path = requireBrowserPath()): Promise<TestContext> =
 	});
 	await loggerStdout.ready;
 
-	return { ...directories, cdpEndpoint, fixtureServer, logger, loggerStdout };
+	return { ...directories, cdpEndpoint, cdpPort, fixtureServer, logger, loggerStdout };
 };
 
 const stopLogger = async (context: TestContext): Promise<void> => {

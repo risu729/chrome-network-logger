@@ -1,28 +1,39 @@
+import { join } from "node:path";
+
 import {
 	cleanupRuns,
 	createRunDirectories,
-	reservePort,
 	startFixtureServer,
 	startLoggerProcess,
 } from "./cdp-fixture";
 import type { TestContext } from "./cdp-fixture";
+import { stopBrowser, stopProcess, waitForProcessExit } from "./cdp-process";
+import type { BrowserProcess } from "./cdp-process";
 import waitFor from "./poll";
-
-type BrowserProcess = ReturnType<typeof Bun.spawn>;
 
 type AttachTestContext = TestContext & {
 	browser: BrowserProcess;
 };
 
 type AttachResources = Awaited<ReturnType<typeof createRunDirectories>> &
-	Pick<AttachTestContext, "browser" | "cdpEndpoint" | "fixtureServer">;
+	Pick<AttachTestContext, "browser" | "cdpEndpoint" | "cdpPort" | "fixtureServer"> & {
+		startupDeadline: number;
+	};
 
 type LoggerContext = ReturnType<typeof startLoggerProcess>;
 
+type PendingAttachResources = {
+	browser: BrowserProcess;
+	directories: Awaited<ReturnType<typeof createRunDirectories>>;
+	fixtureServer: ReturnType<typeof startFixtureServer>;
+	startupDeadline: number;
+};
+
 const browserPath = process.env["E2E_BROWSER_PATH"];
 const activeContexts = new Set<AttachTestContext>();
-const LOGGER_READY_TIMEOUT_MS = 15_000;
-const PROCESS_STOP_TIMEOUT_MS = 5_000;
+const CDP_FETCH_TIMEOUT_MS = 1_000;
+const LOGGER_STOP_TIMEOUT_MS = 7_000;
+const STARTUP_TIMEOUT_MS = 15_000;
 
 const requireBrowserPath = (): string => {
 	if (!browserPath) {
@@ -32,11 +43,7 @@ const requireBrowserPath = (): string => {
 	return browserPath;
 };
 
-const startBrowser = (options: {
-	browserPath: string;
-	cdpPort: number;
-	profileDirectory: string;
-}): BrowserProcess =>
+const startBrowser = (options: { browserPath: string; profileDirectory: string }): BrowserProcess =>
 	Bun.spawn(
 		[
 			options.browserPath,
@@ -45,7 +52,7 @@ const startBrowser = (options: {
 			"--no-startup-window",
 			`--user-data-dir=${options.profileDirectory}`,
 			"--remote-debugging-address=127.0.0.1",
-			`--remote-debugging-port=${options.cdpPort}`,
+			"--remote-debugging-port=0",
 		],
 		{
 			stderr: "inherit",
@@ -53,32 +60,64 @@ const startBrowser = (options: {
 		},
 	);
 
-const waitForCdp = async (cdpEndpoint: string): Promise<void> => {
-	await waitFor("browser CDP endpoint", async () => {
-		const response = await fetch(`${cdpEndpoint}/json/version`);
-		return response.ok ? true : undefined;
-	});
+const browserExitedBeforeCdp = async (browser: BrowserProcess): Promise<never> => {
+	const exitCode = await browser.exited;
+	throw new Error(`Browser exited before exposing CDP with code ${exitCode}.`);
 };
 
-const waitForProcessExit = async (
-	process: ReturnType<typeof Bun.spawn>,
-	timeout = PROCESS_STOP_TIMEOUT_MS,
-): Promise<boolean> =>
-	await Promise.race([process.exited.then(() => true), Bun.sleep(timeout).then(() => false)]);
+const raceBrowserReadiness = async <T>(
+	browser: BrowserProcess,
+	read: (signal: AbortSignal) => Promise<T>,
+): Promise<T> => {
+	const controller = new AbortController();
+	try {
+		return await Promise.race([read(controller.signal), browserExitedBeforeCdp(browser)]);
+	} finally {
+		controller.abort();
+	}
+};
 
-const stopProcess = async (process: ReturnType<typeof Bun.spawn>): Promise<void> => {
-	if (process.exitCode !== null) {
-		await process.exited;
-		return;
+const readBrowserCdpPort = async (profileDirectory: string): Promise<number | undefined> => {
+	const portFile = Bun.file(join(profileDirectory, "DevToolsActivePort"));
+	if (!(await portFile.exists())) {
+		return undefined;
 	}
 
-	process.kill("SIGTERM");
-	if (await waitForProcessExit(process)) {
-		return;
-	}
+	const port = Number((await portFile.text()).split(/\r?\n/u, 1)[0]);
+	return Number.isSafeInteger(port) && port > 0 && port <= 65_535 ? port : undefined;
+};
 
-	process.kill("SIGKILL");
-	await process.exited;
+const waitForBrowserCdpPort = async (
+	profileDirectory: string,
+	browser: BrowserProcess,
+	deadline: number,
+): Promise<number> =>
+	await raceBrowserReadiness(
+		browser,
+		async (signal) =>
+			await waitFor("browser DevToolsActivePort", () => readBrowserCdpPort(profileDirectory), {
+				deadline,
+				signal,
+			}),
+	);
+
+const waitForCdp = async (
+	cdpEndpoint: string,
+	browser: BrowserProcess,
+	deadline: number,
+): Promise<void> => {
+	await raceBrowserReadiness(browser, async (signal) => {
+		await waitFor(
+			"browser CDP endpoint",
+			async () => {
+				const response = await fetch(`${cdpEndpoint}/json/version`, {
+					signal: AbortSignal.timeout(CDP_FETCH_TIMEOUT_MS),
+				});
+				return response.ok ? true : undefined;
+			},
+			{ deadline, signal },
+		);
+	});
 };
 
 const stopFailedLogger = async (loggerContext: LoggerContext): Promise<void> => {
@@ -90,34 +129,81 @@ const stopAttachLogger = async (context: AttachTestContext): Promise<void> => {
 	if (context.logger.exitCode === null) {
 		context.logger.send("shutdown");
 	}
-	if (!(await waitForProcessExit(context.logger))) {
-		await stopProcess(context.logger);
+	if (!(await waitForProcessExit(context.logger, LOGGER_STOP_TIMEOUT_MS))) {
+		context.logger.kill("SIGKILL");
+		await context.logger.exited;
 	}
 	await context.loggerStdout.completed;
 };
 
-const startAttachResources = async (path: string): Promise<AttachResources> => {
-	const directories = await createRunDirectories();
-	const fixtureServer = startFixtureServer();
-	const cdpPort = reservePort();
+const completeAttachResources = async (
+	pending: PendingAttachResources,
+): Promise<AttachResources> => {
+	const { browser, directories, fixtureServer, startupDeadline } = pending;
+	const cdpPort = await waitForBrowserCdpPort(
+		directories.profileDirectory,
+		browser,
+		startupDeadline,
+	);
 	const cdpEndpoint = `http://127.0.0.1:${cdpPort}`;
+	await waitForCdp(cdpEndpoint, browser, startupDeadline);
+	return {
+		...directories,
+		browser,
+		cdpEndpoint,
+		cdpPort,
+		fixtureServer,
+		startupDeadline,
+	};
+};
 
+const startBrowserWithFixtureCleanup = (
+	path: string,
+	profileDirectory: string,
+	fixtureServer: ReturnType<typeof startFixtureServer>,
+): BrowserProcess => {
 	try {
-		const browser = startBrowser({
-			browserPath: path,
-			cdpPort,
-			profileDirectory: directories.profileDirectory,
-		});
-		return { ...directories, browser, cdpEndpoint, fixtureServer };
+		return startBrowser({ browserPath: path, profileDirectory });
 	} catch (error) {
 		fixtureServer.stop(true);
 		throw error;
 	}
 };
 
-const loggerReadyTimeout = async (): Promise<never> => {
-	await Bun.sleep(LOGGER_READY_TIMEOUT_MS);
-	throw new Error("Timed out waiting for logger readiness.");
+const startAttachResources = async (path: string): Promise<AttachResources> => {
+	const directories = await createRunDirectories();
+	const fixtureServer = startFixtureServer();
+	const browser = startBrowserWithFixtureCleanup(path, directories.profileDirectory, fixtureServer);
+	const startupDeadline = Date.now() + STARTUP_TIMEOUT_MS;
+
+	try {
+		return await completeAttachResources({
+			browser,
+			directories,
+			fixtureServer,
+			startupDeadline,
+		});
+	} catch (error) {
+		fixtureServer.stop(true);
+		await stopProcess(browser);
+		throw error;
+	}
+};
+
+const waitForLoggerReady = async (
+	loggerContext: LoggerContext,
+	startupDeadline: number,
+): Promise<void> => {
+	const timeout = Promise.withResolvers<void>();
+	const timeoutId = setTimeout(
+		() => timeout.reject(new Error("Timed out waiting for logger readiness.")),
+		Math.max(0, startupDeadline - Date.now()),
+	);
+	try {
+		await Promise.race([loggerContext.stdout.ready, timeout.promise]);
+	} finally {
+		clearTimeout(timeoutId);
+	}
 };
 
 const startReadyLogger = async (resources: AttachResources): Promise<LoggerContext> => {
@@ -128,7 +214,7 @@ const startReadyLogger = async (resources: AttachResources): Promise<LoggerConte
 		resources.captureDirectory,
 	]);
 	try {
-		await Promise.race([loggerContext.stdout.ready, loggerReadyTimeout()]);
+		await waitForLoggerReady(loggerContext, resources.startupDeadline);
 		return loggerContext;
 	} catch (error) {
 		await stopFailedLogger(loggerContext);
@@ -153,12 +239,11 @@ const startAttachContext = async (path = requireBrowserPath()): Promise<AttachTe
 	const resources = await startAttachResources(path);
 
 	try {
-		await waitForCdp(resources.cdpEndpoint);
 		const loggerContext = await startReadyLogger(resources);
 		return registerContext(resources, loggerContext);
 	} catch (error) {
 		resources.fixtureServer.stop(true);
-		await stopProcess(resources.browser);
+		await stopBrowser(resources.browser, resources.cdpPort);
 		throw error;
 	}
 };
@@ -172,16 +257,22 @@ const closeAttachContext = async (context: AttachTestContext): Promise<void> => 
 	try {
 		await stopAttachLogger(context);
 	} finally {
-		await stopProcess(context.browser);
-		activeContexts.delete(context);
+		try {
+			await stopBrowser(context.browser, context.cdpPort);
+		} finally {
+			activeContexts.delete(context);
+		}
 	}
 };
 
 const cleanupAttachRuns = async (): Promise<void> => {
-	try {
-		await Promise.all([...activeContexts].map(closeAttachContext));
-	} finally {
-		await cleanupRuns();
+	const results = await Promise.allSettled([...activeContexts].map(closeAttachContext));
+	await cleanupRuns();
+	const errors = results.flatMap((result) =>
+		result.status === "rejected" ? [result.reason as unknown] : [],
+	);
+	if (errors.length > 0) {
+		throw new AggregateError(errors, "Attach-mode cleanup failed.");
 	}
 };
 
